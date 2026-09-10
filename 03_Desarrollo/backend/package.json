@@ -1,0 +1,43 @@
+{
+  "name": "vercel-express-typescript-template",
+  "version": "1.0.0",
+  "description": "Template básico para Vercel Serverless Functions con Express y TypeScript",
+  "main": "api/index.ts",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "vercel-build": "tsc",
+    "db:init": "tsx src/db/init.ts"
+  },
+  "keywords": [
+    "vercel",
+    "express",
+    "typescript",
+    "serverless"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@google/genai": "^2.21.0",
+    "@neondatabase/serverless": "^1.1.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "helmet": "^7.1.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.12.7",
+    "tsx": "^4.7.2",
+    "typescript": "^5.4.5"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "@google/genai@2.21.0": true,
+    "protobufjs@7.6.6": true
+  },
+  "overrides": {
+    "qs": "^6.16.0"
+  }
+}
