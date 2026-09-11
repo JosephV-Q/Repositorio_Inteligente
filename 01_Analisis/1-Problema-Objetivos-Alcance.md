@@ -6,7 +6,7 @@ Proyecto Integrador — Desarrollo de Aplicaciones Empresariales — UTS
 
 ## 1. Contexto empresarial
 
-Una organización tipo cuenta con un repositorio de archivos (carpetas compartidas, unidades de red, etc.) que almacena documentos de forma pasiva: solo se guardan y se buscan manualmente por nombre de archivo. No existe ninguna capacidad de comprender, clasificar ni consultar el contenido de esos documentos. A medida que el volumen crece, encontrar información específica dentro del contenido (no solo del nombre del archivo) se vuelve costoso en tiempo y propenso a error humano.
+Una organización cuenta con un repositorio de archivos (carpetas compartidas, unidades de red, etc.) que almacena documentos de forma pasiva: solo se guardan y se buscan manualmente por nombre de archivo. No existe ninguna capacidad de comprender, clasificar ni consultar el contenido de esos documentos. A medida que el volumen crece, encontrar información específica dentro del contenido (no solo del nombre del archivo) se vuelve costoso en tiempo y propenso a error humano.
 
 ## 2. Identificación de la necesidad y oportunidad de negocio
 
@@ -54,21 +54,26 @@ Diseñar, desarrollar, probar, documentar e implementar una aplicación web que 
 - Firma electrónica o validación legal de documentos.
 - Internacionalización (multi-idioma de interfaz); el sistema se documenta y opera en español.
 
+
 ## 6. Actores y usuarios del sistema
 
 | Actor | Tipo | Descripción |
 |---|---|---|
-| Administrador | Humano (rol interno) | Gestiona repositorios, usuarios y tiene acceso completo al sistema, incluida la eliminación de repositorios. |
+| Administrador | Humano (rol interno) | Gestiona el repositorio, usuarios y tiene acceso completo al sistema, incluida la eliminación de repositorios. |
 | Usuario Gestor Documental | Humano (rol interno) | Carga, consulta, descarga documentos; realiza búsquedas y consultas en lenguaje natural sobre los repositorios a los que tiene acceso. |
+|Lector Documental | Humano (rol interno) |  solo tiene la capacidad de leer los documentos| 
 | Servicio de IA | Sistema externo (actor secundario) | Proveedor de modelos de lenguaje y embeddings (ver Diseño 06 y 07) que procesa el contenido documental bajo solicitud del backend. |
 
 ## 7. Perfiles de usuario (personas)
 
 **Administrador — "Camila, líder documental"**
-Responsable de organizar la información de su área. Necesita crear repositorios por proyecto/tema, controlar quién accede y confiar en que el contenido cargado se procesa correctamente.
+Responsable de organizar la información de su área. Necesita crear las categorias por proyecto/tema, controlar quién accede y confiar en que el contenido cargado se procesa correctamente.
 
 **Usuario Gestor Documental — "Andrés, analista"**
-Consume información de los repositorios en su día a día. Necesita encontrar rápidamente un dato dentro de un documento sin tener que abrir y leer archivo por archivo, y prefiere preguntar en lenguaje natural antes que buscar por palabra clave exacta.
+Consume información de los documentos en su día a día. Necesita encontrar rápidamente un dato dentro de un documento sin tener que abrir y leer archivo por archivo, y prefiere preguntar en lenguaje natural antes que buscar por palabra clave exacta.
+
+**Usuario Lector - "Jhon Lopez"**
+Solo es encargado de leer la información que es compartida en el repositorio. Puede buscar los documentos, chatear con la IA y visualizar los documentos del repositorio, esos son sus unicos permisos. 
 
 ---
 *Este documento es la base de los Requisitos Funcionales y No Funcionales (Análisis 02), las Historias de Usuario (Análisis 03) y los Casos de Uso (Análisis 04). Ningún requisito posterior debe contradecir el alcance aquí definido.*

@@ -27,7 +27,6 @@ Numeración estable — usada en Historias de Usuario, Casos de Uso, Trazabilida
 | RF-14 | El sistema debe permitir realizar consultas en lenguaje natural sobre los documentos de un repositorio y recibir una respuesta basada en su contenido. | Búsqueda / IA |
 | RF-15 | El sistema debe mostrar un dashboard con indicadores del repositorio (总 documentos, por categoría, por estado, etc.). | Dashboard |
 | RF-16 | El sistema debe registrar errores y el estado de procesamiento de cada documento. | Auditoría |
-| RF-17 | El sistema debe mantener una bitácora/historial de eventos por documento (cargado, procesado, consultado, eliminado). | Auditoría |
 
 > Nota de alcance: RF-12 exige mínimo 3 tipos de documento con extracción estructurada; en Diseño 06 se define exactamente cuáles tres tipos se soportan y qué campos se extraen de cada uno, para evitar ambigüedad en Desarrollo.
 
@@ -39,18 +38,17 @@ Numeración estable — usada en Historias de Usuario, Casos de Uso, Trazabilida
 | RNF-02 | Seguridad | La autenticación debe usar tokens JWT; las contraseñas deben almacenarse con hash (bcrypt); las credenciales del servicio de IA deben residir en variables de entorno, nunca en el repositorio de código. |
 | RNF-03 | Usabilidad | Las funciones principales (cargar documento, buscar, consultar en lenguaje natural) deben ser alcanzables en máximo 3 clics desde el dashboard. |
 | RNF-04 | Disponibilidad | El sistema debe permanecer operativo durante las sesiones de demostración y sustentación; no se exige alta disponibilidad de nivel empresarial. |
-| RNF-05 | Escalabilidad | La arquitectura debe permitir agregar nuevas categorías de clasificación o nuevos tipos de documento sin modificar el núcleo del sistema. |
-| RNF-06 | Mantenibilidad | El código debe organizarse por capas/módulos independientes y documentarse (ver Desarrollo). |
-| RNF-07 | Portabilidad | El despliegue debe ser reproducible mediante variables de entorno y scripts de configuración (ver Implementación). |
-| RNF-08 | Compatibilidad | El sistema debe procesar correctamente archivos PDF, DOCX y TXT sin corrupción de contenido. |
-| RNF-09 | Capacidad | El sistema debe rechazar archivos que superen el tamaño máximo permitido (ver RN-02). |
-| RNF-10 | Resiliencia | Un fallo de procesamiento en un documento no debe afectar la disponibilidad del resto del sistema (ver RN-07). |
+| RNF-05 | Mantenibilidad | El código debe organizarse por capas/módulos independientes y documentarse (ver Desarrollo). |
+| RNF-06 | Portabilidad | El despliegue debe ser reproducible mediante variables de entorno y scripts de configuración (ver Implementación). |
+| RNF-07 | Compatibilidad | El sistema debe procesar correctamente archivos PDF, DOCX y TXT sin corrupción de contenido. |
+| RNF-08 | Capacidad | El sistema debe rechazar archivos que superen el tamaño máximo permitido (ver RN-02). |
+| RNF-09 | Resiliencia | Un fallo de procesamiento en un documento no debe afectar la disponibilidad del resto del sistema (ver RN-07). |
 
 ## 3. Reglas de negocio (RN)
 
 | ID | Regla |
 |---|---|
-| RN-01 | Solo se aceptan archivos en formato PDF, DOCX o TXT. Cualquier otro formato debe ser rechazado en la carga. |
+| RN-01 | los principales archivos aceptados son formato PDF, DOCX o TXT. |
 | RN-02 | El tamaño máximo permitido por archivo es 20 MB. |
 | RN-03 | Todo documento debe pertenecer obligatoriamente a un repositorio; no pueden existir documentos huérfanos. |
 | RN-04 | Todo documento procesado exitosamente debe quedar asociado a al menos una categoría. |

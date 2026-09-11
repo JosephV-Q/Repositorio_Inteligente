@@ -12,16 +12,13 @@
 - **Dado** que ingreso credenciales inválidas, **cuando** intento iniciar sesión, **entonces** el sistema muestra un mensaje de error sin revelar cuál dato es incorrecto.
 
 ### HU-02 — Crear repositorio (RF-03)
-**Como** usuario autenticado, **quiero** crear un repositorio documental, **para** organizar mis documentos por proyecto o tema.
-
-- **Dado** que estoy autenticado, **cuando** creo un repositorio con un nombre válido, **entonces** el sistema lo crea y lo muestra en mi lista de repositorios.
-- **Dado** que intento crear un repositorio con nombre vacío, **cuando** confirmo, **entonces** el sistema rechaza la acción y muestra un mensaje de validación.
+**Como** usuario autenticado, **quiero** crear el repositorio documental, **para** organizar mis documentos por proyecto o tema.
 
 ### HU-03 — Administrar repositorio (RF-04)
-**Como** Administrador, **quiero** editar o eliminar un repositorio, **para** mantener organizada la estructura documental.
+**Como** Administrador, **quiero** editar o eliminar las categorias y documentos del repositorio, **para** mantener organizada la estructura documental.
 
-- **Dado** que soy Administrador, **cuando** elimino un repositorio, **entonces** el sistema solicita confirmación y, al aceptar, elimina el repositorio y sus documentos asociados.
-- **Dado** que soy Usuario Gestor Documental, **cuando** intento eliminar un repositorio, **entonces** el sistema deniega la acción por permisos insuficientes.
+- **Dado** que soy Administrador, **cuando** elimino un archivo, **entonces** el sistema solicita confirmación y, al aceptar, elimina el archivo.
+- **Dado** que soy Usuario Lector Documental, **cuando** intento eliminar un repositorio, **entonces** el sistema deniega la acción por permisos insuficientes.
 
 ### HU-04 — Cargar documento (RF-05)
 **Como** usuario autenticado, **quiero** cargar un archivo PDF, DOCX o TXT a un repositorio, **para** que el sistema lo gestione y procese.
@@ -31,7 +28,7 @@
 - **Dado** que selecciono un archivo mayor a 20 MB, **cuando** intento cargarlo, **entonces** el sistema rechaza la carga (RN-02).
 
 ### HU-05 — Consultar y descargar documento (RF-06, RF-07)
-**Como** usuario autenticado, **quiero** ver el listado de documentos de un repositorio y descargar el archivo original, **para** revisar su contenido completo cuando lo necesite.
+**Como** usuario autenticado, **quiero** ver el listado de documentos del repositorio y descargar el archivo original, **para** revisar su contenido completo cuando lo necesite.
 
 - **Dado** que un repositorio tiene documentos, **cuando** lo abro, **entonces** veo el listado con nombre, estado, categoría y fecha de carga.
 - **Dado** que selecciono "descargar" sobre un documento, **cuando** confirmo, **entonces** el sistema entrega el archivo original sin alteraciones.
