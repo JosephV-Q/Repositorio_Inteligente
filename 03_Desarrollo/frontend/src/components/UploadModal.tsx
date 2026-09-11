@@ -19,6 +19,8 @@ import { useAuth } from "../context/AuthContext";
 import { categories as defaultCategories } from "../data/documents";
 import { api, ApiClientError } from "../services/api";
 import type { DocumentItem } from "../types/document";
+import { extractDocument, type UnifiedExtractionResult } from "../tools";
+import { chunkDocument } from "../tools/textChunker";
 
 interface UploadModalProps {
   isOpen: boolean;
@@ -51,6 +53,12 @@ export function UploadModal({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileTextContent, setFileTextContent] = useState<string>("");
   const [isDragging, setIsDragging] = useState(false);
+
+  // Estados de extracción de texto con src/tools
+  const [isExtracting, setIsExtracting] = useState<boolean>(false);
+  const [extractionProgress, setExtractionProgress] = useState<string>("");
+  const [extractionResult, setExtractionResult] = useState<UnifiedExtractionResult | null>(null);
+  const [showExtractedPreview, setShowExtractedPreview] = useState<boolean>(false);
 
   // Estados de metadatos básicos
   const [title, setTitle] = useState("");
@@ -94,6 +102,8 @@ export function UploadModal({
   const [uploadedDoc, setUploadedDoc] = useState<DocumentItem | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const extractionPromiseRef = useRef<Promise<string> | null>(null);
+  const aiSummaryPromiseRef = useRef<Promise<void> | null>(null);
 
   // Carga de estado de Google Drive y categorías de Neon DB al abrir el modal
   useEffect(() => {
@@ -139,6 +149,10 @@ export function UploadModal({
   const resetForm = useCallback(() => {
     setSelectedFile(null);
     setFileTextContent("");
+    setIsExtracting(false);
+    setExtractionProgress("");
+    setExtractionResult(null);
+    setShowExtractedPreview(false);
     setTitle("");
     const initialCategory =
       currentCategory && currentCategory !== "Todas las categorías"
@@ -220,21 +234,151 @@ export function UploadModal({
     ];
   };
 
-  // Procesar archivo seleccionado
-  const validateAndProcessFile = (file: File) => {
+  // Función central para generar resumen inteligente con Gemini AI a partir del contenido extraído
+  const generateSummaryWithAI = async (
+    file: File,
+    docTitle: string,
+    docCategory: string,
+    rawText: string
+  ): Promise<void> => {
+    setIsAiGenerating(true);
+    setErrorMessage(null);
+
+    const activeCat = isCustomCategory ? customCategoryName.trim() || docCategory : docCategory;
+    const format = getFormatType(file.name);
+
+    try {
+      // Preparar fragmentos estratégicos del documento para no sobrecargar el prompt
+      let textSnippet = "";
+      if (rawText && rawText.trim().length > 0) {
+        const chunks = chunkDocument(rawText, { chunkSize: 1500, chunkOverlap: 150 });
+        if (chunks.length <= 3) {
+          textSnippet = chunks.map((c) => c.text).join("\n\n");
+        } else {
+          // Tomar inicio, sección intermedia y conclusiones
+          const firstChunk = chunks[0]?.text || "";
+          const midChunk = chunks[Math.floor(chunks.length / 2)]?.text || "";
+          const lastChunk = chunks[chunks.length - 1]?.text || "";
+          textSnippet = `[SECCIÓN INICIAL]:\n${firstChunk}\n\n[SECCIÓN INTERMEDIA]:\n${midChunk}\n\n[SECCIÓN FINAL / CONCLUSIONES]:\n${lastChunk}`;
+        }
+      }
+
+      const prompt = `Analiza este documento y su contenido extraído. Responde ÚNICAMENTE con un objeto JSON válido con la siguiente estructura:
+{
+  "resumen": [
+    "Punto clave 1 sintetizado y detallado",
+    "Punto clave 2 sintetizado y detallado",
+    "Punto clave 3 sintetizado y detallado",
+    "Punto clave 4 sintetizado y detallado"
+  ],
+  "palabras_clave": ["etiqueta1", "etiqueta2", "etiqueta3", "etiqueta4"],
+  "descripcion": "Descripción ejecutiva concisa del contenido del documento (1 a 2 líneas)",
+  "contexto": "Contexto operativo o institucional sugerido"
+}
+
+DATOS DEL DOCUMENTO:
+- Nombre de archivo: "${file.name}"
+- Título: "${docTitle || file.name}"
+- Formato: "${format}"
+- Categoría: "${activeCat}"
+${textSnippet ? `\nCONTENIDO EXTRAÍDO DEL DOCUMENTO:\n"""\n${textSnippet.slice(0, 5000)}\n"""` : ""}`;
+
+      const res = await api.askGemini({
+        prompt,
+        systemInstruction:
+          "Eres un analista experto en extracción semántica, síntesis y gestión documental para el sistema DocuHub RVD. Genera resúmenes ejecutivos precisos y de alto valor basados estrictamente en el contenido provisto.",
+        temperature: 0.2,
+        maxOutputTokens: 1024,
+      });
+
+      if (res.success && res.data?.response) {
+        let parsed: any = null;
+        try {
+          const jsonMatch = res.data.response.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            parsed = JSON.parse(jsonMatch[0]);
+          }
+        } catch {
+          // Si no vino como JSON estricto
+        }
+
+        if (parsed) {
+          if (Array.isArray(parsed.resumen) && parsed.resumen.length > 0) {
+            setSummaryText(parsed.resumen.join("\n"));
+          }
+          if (Array.isArray(parsed.palabras_clave) && parsed.palabras_clave.length > 0) {
+            setKeywords((prev) =>
+              Array.from(
+                new Set([
+                  ...prev,
+                  ...parsed.palabras_clave.map((k: string) => String(k).toLowerCase()),
+                ])
+              )
+            );
+          }
+          if (parsed.descripcion && typeof parsed.descripcion === "string") {
+            setDescription(parsed.descripcion);
+          }
+          if (parsed.contexto && typeof parsed.contexto === "string") {
+            setContexto(parsed.contexto);
+          }
+          return;
+        } else {
+          setSummaryText(res.data.response.trim());
+          return;
+        }
+      }
+
+      // Fallback si la respuesta de Gemini no es exitosa
+      const fallbackSummary = generateSmartSummary(
+        file.name,
+        format,
+        docTitle,
+        activeCat,
+        rawText
+      );
+      setSummaryText(fallbackSummary.join("\n"));
+    } catch (aiErr) {
+      console.warn("[UploadModal] Gemini AI no respondió, aplicando resumen estructurado:", aiErr);
+      const fallbackSummary = generateSmartSummary(
+        file.name,
+        format,
+        docTitle,
+        activeCat,
+        rawText
+      );
+      setSummaryText(fallbackSummary.join("\n"));
+      setKeywords((prev) =>
+        Array.from(
+          new Set([
+            ...prev,
+            activeCat.toLowerCase(),
+            format.toLowerCase(),
+            "rvd",
+            "docuhub",
+          ])
+        )
+      );
+    } finally {
+      setIsAiGenerating(false);
+    }
+  };
+
+  // Procesar archivo seleccionado: extrae texto con src/tools y genera resumen con IA
+  const validateAndProcessFile = async (file: File) => {
     setErrorMessage(null);
 
     const extension = `.${file.name.split(".").pop()?.toLowerCase()}`;
     if (!ACCEPTED_FORMATS.includes(extension)) {
       setErrorMessage(
-        "Formato no compatible. Por favor sube archivos en formato PDF, DOCX o TXT.",
+        "Formato no compatible. Por favor sube archivos en formato PDF, DOCX o TXT."
       );
       return;
     }
 
     if (file.size > MAX_FILE_SIZE) {
       setErrorMessage(
-        "El archivo excede el límite máximo de 50 MB permitido por el sistema.",
+        "El archivo excede el límite máximo de 50 MB permitido por el sistema."
       );
       return;
     }
@@ -242,7 +386,8 @@ export function UploadModal({
     setSelectedFile(file);
 
     // Sugerir título amigable sin la extensión
-    const baseName = file.name.substring(0, file.name.lastIndexOf(".")) || file.name;
+    const baseName =
+      file.name.substring(0, file.name.lastIndexOf(".")) || file.name;
     setTitle(baseName);
 
     // Palabras clave iniciales sugeridas
@@ -254,21 +399,54 @@ export function UploadModal({
       setContexto(`Ingesta institucional ${category}`);
     }
 
-    // Si es TXT, leemos unas líneas para enriquecer el resumen y contexto AI
-    if (extension === ".txt") {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const text = (e.target?.result as string) || "";
-        setFileTextContent(text.slice(0, 1500));
-        const autoSummary = generateSmartSummary(file.name, format, baseName, category, text);
-        setSummaryText(autoSummary.join("\n"));
-      };
-      reader.readAsText(file);
-    } else {
-      setFileTextContent("");
-      const autoSummary = generateSmartSummary(file.name, format, baseName, category, "");
-      setSummaryText(autoSummary.join("\n"));
-    }
+    // 1. Extraer contenido antes de subir usando src/tools (client-side)
+    const extractionPromise = (async () => {
+      setIsExtracting(true);
+      setExtractionProgress("Iniciando extracción de contenido con src/tools...");
+      setExtractionResult(null);
+      let text = "";
+
+      try {
+        const res = await extractDocument(file, {
+          onPageProgress: (current, total) => {
+            setExtractionProgress(`Extrayendo página ${current} de ${total}...`);
+          },
+        });
+
+        setExtractionResult(res);
+
+        if (res.success && res.text) {
+          text = res.text;
+          setFileTextContent(res.text);
+          setExtractionProgress(
+            `Extracción completada con éxito (${res.metadata.wordCount.toLocaleString()} palabras)`
+          );
+        } else {
+          const msg =
+            res.errorMessage || "No se detectó texto digital seleccionable.";
+          setExtractionProgress(msg);
+        }
+      } catch (err: any) {
+        console.warn("[UploadModal] Error en extractDocument:", err);
+        setExtractionProgress("Error en la extracción client-side.");
+      } finally {
+        setIsExtracting(false);
+      }
+      return text;
+    })();
+
+    extractionPromiseRef.current = extractionPromise;
+    const extractedText = await extractionPromise;
+
+    // 2. Usar la API de IA para generar automáticamente el resumen a partir del contenido extraído
+    const aiPromise = generateSummaryWithAI(
+      file,
+      baseName,
+      category,
+      extractedText
+    );
+    aiSummaryPromiseRef.current = aiPromise;
+    await aiPromise;
   };
 
   const handleFileInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -306,6 +484,12 @@ export function UploadModal({
     setTitle("");
     setErrorMessage(null);
     setFileTextContent("");
+    setIsExtracting(false);
+    setExtractionProgress("");
+    setExtractionResult(null);
+    setShowExtractedPreview(false);
+    extractionPromiseRef.current = null;
+    aiSummaryPromiseRef.current = null;
     setKeywords([]);
     setSummaryText("");
     if (fileInputRef.current) {
@@ -333,88 +517,15 @@ export function UploadModal({
     }
   };
 
-  // Asistente de IA con Gemini AI usando `api.askGemini`
+  // Re-generación manual de IA al pulsar el botón del formulario
   const handleGenerateWithAI = async () => {
     if (!selectedFile) return;
-    setIsAiGenerating(true);
-    setErrorMessage(null);
-
-    const activeCat = isCustomCategory ? customCategoryName.trim() || category : category;
-
-    try {
-      const prompt = `Analiza este documento y responde ÚNICAMENTE con un objeto JSON válido con las siguientes claves:
-{
-  "resumen": ["Punto clave 1", "Punto clave 2", "Punto clave 3"],
-  "palabras_clave": ["etiqueta1", "etiqueta2", "etiqueta3", "etiqueta4"],
-  "contexto": "Contexto operativo o institucional sugerido"
-}
-
-Datos del documento:
-- Título: "${title || selectedFile.name}"
-- Categoría: "${activeCat}"
-- Descripción: "${description || "Sin descripción proporcionada"}"
-${fileTextContent ? `- Fragmento del contenido: "${fileTextContent.slice(0, 1000)}"` : ""}`;
-
-      const res = await api.askGemini({
-        prompt,
-        temperature: 0.2,
-      });
-
-      if (res.success && res.data?.response) {
-        let parsed: any = null;
-        try {
-          const jsonMatch = res.data.response.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            parsed = JSON.parse(jsonMatch[0]);
-          }
-        } catch {
-          // Si no vino como JSON estricto, usamos el texto directo
-        }
-
-        if (parsed) {
-          if (Array.isArray(parsed.resumen) && parsed.resumen.length > 0) {
-            setSummaryText(parsed.resumen.join("\n"));
-          }
-          if (Array.isArray(parsed.palabras_clave) && parsed.palabras_clave.length > 0) {
-            setKeywords((prev) =>
-              Array.from(new Set([...prev, ...parsed.palabras_clave.map((k: string) => String(k).toLowerCase())])),
-            );
-          }
-          if (parsed.contexto && typeof parsed.contexto === "string") {
-            setContexto(parsed.contexto);
-          }
-        } else {
-          setSummaryText(res.data.response.trim());
-        }
-      } else {
-        // Fallback inteligente local
-        const format = getFormatType(selectedFile.name);
-        const fallbackSummary = generateSmartSummary(
-          selectedFile.name,
-          format,
-          title,
-          activeCat,
-          fileTextContent,
-        );
-        setSummaryText(fallbackSummary.join("\n"));
-      }
-    } catch (aiErr) {
-      console.warn("[UploadModal] Gemini AI no respondió, aplicando extracción semántica local:", aiErr);
-      const format = getFormatType(selectedFile.name);
-      const fallbackSummary = generateSmartSummary(
-        selectedFile.name,
-        format,
-        title,
-        activeCat,
-        fileTextContent,
-      );
-      setSummaryText(fallbackSummary.join("\n"));
-      setKeywords((prev) =>
-        Array.from(new Set([...prev, activeCat.toLowerCase(), format.toLowerCase(), "rvd", "docuhub"])),
-      );
-    } finally {
-      setIsAiGenerating(false);
-    }
+    await generateSummaryWithAI(
+      selectedFile,
+      title,
+      category,
+      fileTextContent
+    );
   };
 
   // Envío del formulario y subida mediante ApiClient
@@ -430,17 +541,60 @@ ${fileTextContent ? `- Fragmento del contenido: "${fileTextContent.slice(0, 1000
       : category;
 
     setIsUploading(true);
-    setUploadProgress(10);
+    setUploadProgress(5);
     setLoadedBytes(0);
     setTotalBytes(selectedFile.size);
-    setStatusMessage("Solicitando URL prefirmada a Google Drive...");
+    setStatusMessage("Verificando extracción y análisis con IA...");
     setErrorMessage(null);
 
+    // 1. Si la extracción aún está en curso, esperar a que finalice
+    let currentExtractedText = fileTextContent;
+    if (extractionPromiseRef.current) {
+      setStatusMessage("Extrayendo contenido del documento con src/tools...");
+      try {
+        const awaitedText = await extractionPromiseRef.current;
+        if (awaitedText) {
+          currentExtractedText = awaitedText;
+        }
+      } catch (err) {
+        console.warn("[UploadModal] Extracción pendiente no completada:", err);
+      }
+    }
+
+    // 2. Si la IA aún está generando el resumen, esperar
+    if (aiSummaryPromiseRef.current) {
+      setStatusMessage("Generando resumen con Gemini AI...");
+      try {
+        await aiSummaryPromiseRef.current;
+      } catch (err) {
+        console.warn("[UploadModal] Espera de IA no completada:", err);
+      }
+    }
+
     const format = getFormatType(selectedFile.name);
-    const summaryLines = summaryText
+    let summaryLines = summaryText
       .split("\n")
       .map((l) => l.trim())
       .filter((l) => l.length > 0);
+
+    // 3. Si no hay resumen generado todavía, invocar IA o fallback
+    if (summaryLines.length === 0) {
+      setStatusMessage("Generando resumen inteligente con Gemini AI...");
+      try {
+        await generateSummaryWithAI(
+          selectedFile,
+          title,
+          finalCategory,
+          currentExtractedText
+        );
+        summaryLines = summaryText
+          .split("\n")
+          .map((l) => l.trim())
+          .filter((l) => l.length > 0);
+      } catch (err) {
+        console.warn("[UploadModal] Error al forzar generación de resumen:", err);
+      }
+    }
 
     const finalSummary =
       summaryLines.length > 0
@@ -450,8 +604,11 @@ ${fileTextContent ? `- Fragmento del contenido: "${fileTextContent.slice(0, 1000
             format,
             title,
             finalCategory,
-            fileTextContent,
+            currentExtractedText,
           );
+
+    setStatusMessage("Solicitando URL prefirmada a Google Drive...");
+    setUploadProgress(15);
 
     try {
       // Subida directa a Google Drive y registro en Neon DB mediante `api.subirArchivo`
@@ -689,6 +846,79 @@ ${fileTextContent ? `- Fragmento del contenido: "${fileTextContent.slice(0, 1000
                 >
                   <Trash2 size={15} /> Cambiar
                 </button>
+              </div>
+            )}
+
+            {/* Indicador de Extracción Client-Side (src/tools) */}
+            {selectedFile && (
+              <div className="extraction-container">
+                {isExtracting ? (
+                  <div className="extraction-status-banner extracting">
+                    <Loader2 size={16} className="spinning" />
+                    <div className="extraction-status-info">
+                      <strong>Extrayendo texto del archivo (Client-Side)...</strong>
+                      <small>{extractionProgress}</small>
+                    </div>
+                  </div>
+                ) : extractionResult ? (
+                  <div className="extraction-status-banner success">
+                    <div className="extraction-status-info">
+                      <div className="extraction-badge-row">
+                        <span className="extraction-pill success">
+                          <Check size={12} /> Texto extraído ({extractionResult.metadata.fileType.toUpperCase()})
+                        </span>
+                        {extractionResult.metadata.pageCount && (
+                          <span className="extraction-metric">
+                            {extractionResult.metadata.pageCount}{" "}
+                            {extractionResult.metadata.pageCount === 1 ? "pág." : "págs."}
+                          </span>
+                        )}
+                        <span className="extraction-metric">
+                          {extractionResult.metadata.wordCount.toLocaleString()} palabras
+                        </span>
+                        <span className="extraction-metric">
+                          {extractionResult.metadata.charCount.toLocaleString()} caracteres
+                        </span>
+                        {isAiGenerating && (
+                          <span className="extraction-pill ai-generating">
+                            <Sparkles size={11} className="spinning" /> Resumiendo con Gemini AI...
+                          </span>
+                        )}
+                      </div>
+                      {extractionResult.metadata.isScannedOrEmpty && (
+                        <small className="extraction-warning">
+                          ⚠️ El documento parece ser una imagen escaneada o no contiene capa de texto seleccionable.
+                        </small>
+                      )}
+                    </div>
+                    {fileTextContent && (
+                      <button
+                        type="button"
+                        className="preview-extracted-btn"
+                        onClick={() => setShowExtractedPreview(!showExtractedPreview)}
+                        title="Ver el contenido de texto extraído"
+                      >
+                        {showExtractedPreview ? "Ocultar texto" : "Ver texto extraído"}
+                      </button>
+                    )}
+                  </div>
+                ) : null}
+
+                {showExtractedPreview && fileTextContent && (
+                  <div className="extracted-text-preview">
+                    <div className="extracted-preview-header">
+                      <small>
+                        Contenido extraído del archivo ({fileTextContent.length.toLocaleString()} caracteres totales):
+                      </small>
+                    </div>
+                    <pre className="extracted-preview-content">
+                      {fileTextContent.slice(0, 2500)}
+                      {fileTextContent.length > 2500
+                        ? "\n\n[... contenido restante truncado para vista previa ...]"
+                        : ""}
+                    </pre>
+                  </div>
+                )}
               </div>
             )}
 

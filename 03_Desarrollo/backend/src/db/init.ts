@@ -9,6 +9,10 @@ dotenv.config();
  * Sentencias SQL DDL con 'IF NOT EXISTS' para cada una de las tablas del sistema
  */
 export const SCHEMAS = {
+  extensions: `
+    CREATE EXTENSION IF NOT EXISTS vector;
+  `,
+
   roles: `
     CREATE TABLE IF NOT EXISTS roles (
         id_roles     SERIAL PRIMARY KEY,
@@ -38,9 +42,11 @@ export const SCHEMAS = {
         descripcion    TEXT,
         resumen        TEXT,
         palabras_clave TEXT[], 
-        contexto       VARCHAR(255)
+        contexto       VARCHAR(255),
+        embedding      vector(768)
     );
     CREATE INDEX IF NOT EXISTS idx_repositorios_categoria ON repositorios (categoria);
+    CREATE INDEX IF NOT EXISTS idx_repositorios_embedding ON repositorios USING hnsw (embedding vector_cosine_ops);
   `,
 
   configuracion: `
@@ -59,9 +65,11 @@ export const SCHEMAS = {
         comparativa  VARCHAR(255),
         descripcion  TEXT,
         categoria    VARCHAR(100),
-        contexto     VARCHAR(255)
+        contexto     VARCHAR(255),
+        embedding    vector(768)
     );
     CREATE INDEX IF NOT EXISTS idx_comparativas_categoria ON comparativas (categoria);
+    CREATE INDEX IF NOT EXISTS idx_comparativas_embedding ON comparativas USING hnsw (embedding vector_cosine_ops);
   `,
 
   invitaciones: `
@@ -114,8 +122,9 @@ export async function ensureDatabaseTables(): Promise<{ ok: boolean; message: st
     try {
       console.log('🔄 [Worker DB Init] Comprobando existencia de tablas en Neon DB...');
 
-      // Ejecutamos la creación de todas las tablas en orden
+      // Ejecutamos la creación de extensiones y tablas en orden
       const ddlQueries = [
+        SCHEMAS.extensions,
         SCHEMAS.roles,
         SCHEMAS.usuarios,
         SCHEMAS.repositorios,
@@ -134,6 +143,12 @@ export async function ensureDatabaseTables(): Promise<{ ok: boolean; message: st
           await query(stmt);
         }
       }
+
+      // Migración incremental para tablas preexistentes (idempotente)
+      await query('ALTER TABLE repositorios ADD COLUMN IF NOT EXISTS embedding vector(768);');
+      await query('ALTER TABLE comparativas ADD COLUMN IF NOT EXISTS embedding vector(768);');
+      await query('CREATE INDEX IF NOT EXISTS idx_repositorios_embedding ON repositorios USING hnsw (embedding vector_cosine_ops);');
+      await query('CREATE INDEX IF NOT EXISTS idx_comparativas_embedding ON comparativas USING hnsw (embedding vector_cosine_ops);');
 
       // 1. Sincronización automática de roles con roles.json
       await syncRolesFromConfig();

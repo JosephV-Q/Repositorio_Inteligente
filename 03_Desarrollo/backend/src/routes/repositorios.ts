@@ -6,7 +6,9 @@ import {
   getRepositorios,
   getRepositorioById,
   updateRepositorio,
-  deleteRepositorio
+  deleteRepositorio,
+  procesarTextoYCrearRepositorio,
+  buscarRepositorios
 } from '../controllers/repositorios.controller.js';
 
 const router = Router();
@@ -18,13 +20,20 @@ router.post('/drive/upload-url', requestUploadUrl);
 // 2. Estado de configuración de la cuenta común de Google Drive
 router.get('/drive/status', getDriveConfigStatus);
 
-// 3. Registrar metadatos del archivo subido en la base de datos
+// 3. Procesar texto bruto de documento con Gemini (metadatos + embedding) y registrar
+router.post('/procesar-texto', procesarTextoYCrearRepositorio);
+
+// 4. Búsqueda de documentos (Semántica / Vectorial / Híbrida / Texto)
+router.get('/buscar', buscarRepositorios);
+router.post('/buscar', buscarRepositorios);
+
+// 5. Registrar metadatos del archivo subido en la base de datos
 router.post('/', createRepositorio);
 
-// 4. Listar repositorios (con filtros opcionales: categoria, nom_arch, palabra_clave, contexto, limit, offset)
+// 6. Listar repositorios (con filtros opcionales: categoria, nom_arch, palabra_clave, contexto, limit, offset)
 router.get('/', getRepositorios);
 
-// 5. Consultar un repositorio específico por ID
+// 7. Consultar un repositorio específico por ID
 router.get('/:id', getRepositorioById);
 
 // 6. Actualizar metadatos de un repositorio por ID

@@ -6,15 +6,20 @@ import {
   updateComparativa,
   addUrlToComparativa,
   removeUrlFromComparativa,
-  deleteComparativa
+  deleteComparativa,
+  buscarComparativas
 } from '../controllers/comparativas.controller.js';
 
 const router = Router();
 
-// 1. Listar o buscar comparativas (con filtros: titulo, categoria, contexto, url, limit, offset)
+// 1. Búsqueda de comparativas (Semántica / Vectorial / Híbrida / Texto)
+router.get('/buscar', buscarComparativas);
+router.post('/buscar', buscarComparativas);
+
+// 2. Listar o buscar comparativas (con filtros: titulo, categoria, contexto, url, limit, offset)
 router.get('/', getComparativas);
 
-// 2. Obtener una comparativa por ID
+// 3. Obtener una comparativa por ID
 router.get('/:id', getComparativaById);
 
 // 3. Crear una nueva comparativa

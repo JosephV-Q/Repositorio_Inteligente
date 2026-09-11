@@ -168,18 +168,24 @@ const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
 | | `api.updateInvitacionRol(id, rol)` | Modifica rol de la invitación |
 | | `api.deleteInvitacion(id)` | Invalida/elimina invitación |
 | **Repositorios / Drive** | `api.subirArchivo(file, params?)` | **Todo en uno**: pide URL, sube a Drive y registra en BD |
+| | `api.procesarTextoDocumento(data)` | Procesa texto con IA (metadatos + embedding) y registra |
+| | `api.buscarRepositorios(texto O params)` | **Búsqueda Semántica**: similitud de coseno en Neon DB con embeddings Gemini |
 | | `api.getRepositorios(filters?)` | Lista repositorios con filtros |
 | | `api.getRepositorioById(id)` | Consulta repositorio por ID |
 | | `api.createRepositorio(data)` | Registra repositorio en BD manualmente |
 | | `api.updateRepositorio(id, data)` | Modifica metadatos de archivo |
 | | `api.deleteRepositorio(id)` | Elimina registro de repositorio |
 | | `api.getDriveConfigStatus()` | Verifica estado de Google Drive |
+| **Categorías** | `api.getCategorias(search?)` | Lista todas las categorías registradas |
+| | `api.getCategoriaDetalle(nombre)` | Detalle de categoría y conteo de documentos |
+| | `api.createCategoria(nombre)` | Crea una nueva categoría |
+| | `api.updateCategoria(old, new, sync?)` | Renombra categoría y sincroniza referencias |
+| | `api.deleteCategoria(nombre, reassignTo?)` | Elimina categoría (con opción de reasignar) |
 | **Configuración** | `api.getConfiguraciones(filters?)` | Lista configuraciones institucionales |
-| | `api.createConfiguracion(data)` | Crea configuración con categorías |
-| | `api.addCategoriaToConfig(id, cat)` | Agrega una categoría al array |
-| | `api.removeCategoriaFromConfig(id, cat)` | Quita una categoría del array |
+| | `api.createConfiguracion(data)` | Crea configuración institucional |
 | | `api.deleteConfiguracion(id)` | Elimina configuración |
 | **Comparativas** | `api.getComparativas(filters?)` | Lista comparativas registradas |
+| | `api.buscarComparativas(texto O params)` | Búsqueda semántica o textual en comparativas |
 | | `api.createComparativa(data)` | Crea comparativa con array de URLs |
 | | `api.addUrlToComparativa(id, url)` | Agrega una URL al array |
 | | `api.removeUrlFromComparativa(id, url)` | Quita una URL del array |
@@ -190,7 +196,58 @@ const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
 
 ---
 
-## 5. Control de Errores Tipado
+## 5. Clases Modelo Orientadas a Objetos (`client/models`)
+
+Si prefieres trabajar con clases de modelo en lugar de llamar directamente a `api.*`:
+
+```typescript
+import { Categoria, Repositorio } from './client';
+
+// ==========================================
+// 1. GESTIÓN DE CATEGORÍAS
+// ==========================================
+// Listar categorías
+const categorias = await Categoria.fetchAll();
+
+// Crear categoría
+const nuevaCat = await Categoria.create('Inteligencia Artificial');
+
+// Renombrar y sincronizar documentos
+await nuevaCat.rename('IA y Ciencia de Datos', true);
+
+// Ver detalle y estadísticas de uso
+await nuevaCat.refresh();
+console.log(`Documentos asociados: ${nuevaCat.repositoriosCount}`);
+
+// Eliminar categoría (reasignando documentos a 'General')
+await nuevaCat.delete('General');
+
+// ==========================================
+// 2. GESTIÓN DE REPOSITORIOS / DOCUMENTOS
+// ==========================================
+// Procesar texto bruto con Gemini (obtiene resumen, tags y embedding vectorial)
+const doc = await Repositorio.procesarTexto({
+  texto: 'Contrato de servicios profesionales...',
+  nom_arch: 'contrato.pdf'
+});
+
+console.log('Categoría sugerida por IA:', doc.categoria);
+console.log('Embedding generado:', Boolean(doc.embedding));
+
+// Búsqueda semántica inteligente en los documentos
+const resultados = await Repositorio.buscar('servicios profesionales y honorarios', { limit: 5 });
+console.log('Top match:', resultados[0].nom_arch, 'Similitud:', resultados[0].similarity);
+
+// Modificar metadatos
+await doc.update({ descripcion: 'Descripción actualizada' });
+
+// Eliminar documento
+await doc.delete();
+```
+
+---
+
+## 6. Control de Errores Tipado
 
 Cuando cualquier petición falla (código HTTP 400, 401, 403, 404, 500, etc.) o hay pérdida de conexión a internet, se lanza una excepción de tipo [`ApiClientError`](./ApiClient.ts):
 

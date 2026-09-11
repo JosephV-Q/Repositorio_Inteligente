@@ -1,4 +1,5 @@
 import { query, queryOne } from '../db/index.js';
+import { generateEmbedding } from '../gemini/index.js';
 
 /**
  * Entidad Comparativa que representa una fila de la tabla 'comparativas'
@@ -11,6 +12,7 @@ export interface Comparativa {
   descripcion: string | null;
   categoria: string | null;
   contexto: string | null;
+  embedding?: number[] | string | null;
 }
 
 /**
@@ -23,6 +25,7 @@ export interface CreateComparativaDto {
   descripcion?: string | null;
   categoria?: string | null;
   contexto?: string | null;
+  embedding?: number[] | string | null;
 }
 
 /**
@@ -35,6 +38,7 @@ export interface UpdateComparativaDto {
   descripcion?: string | null;
   categoria?: string | null;
   contexto?: string | null;
+  embedding?: number[] | string | null;
 }
 
 /**
@@ -48,6 +52,25 @@ export interface ComparativaFilters {
   url?: string;
 }
 
+/**
+ * Opciones para búsqueda semántica / híbrida de comparativas
+ */
+export interface SearchComparativaOptions {
+  limit?: number;
+  minSimilarity?: number;
+  categoria?: string;
+  embedding?: number[] | string;
+  modo?: 'semantico' | 'hibrido' | 'texto';
+}
+
+/**
+ * Resultado de búsqueda de comparativa con score de similitud
+ */
+export type ComparativaSearchResult = Comparativa & {
+  similarity: number;
+  matchType?: 'vector' | 'texto' | 'hibrido';
+};
+
 export type ComparativaProperty = keyof Omit<Comparativa, 'id'>;
 
 const ALLOWED_COLUMNS: Array<keyof Comparativa> = [
@@ -57,8 +80,14 @@ const ALLOWED_COLUMNS: Array<keyof Comparativa> = [
   'comparativa',
   'descripcion',
   'categoria',
-  'contexto'
+  'contexto',
+  'embedding'
 ];
+
+function formatEmbedding(embedding?: number[] | string | null): string | null {
+  if (!embedding) return null;
+  return Array.isArray(embedding) ? JSON.stringify(embedding) : String(embedding);
+}
 
 export const ComparativasModule = {
   // ==========================================
@@ -76,9 +105,10 @@ export const ComparativasModule = {
         comparativa,
         descripcion,
         categoria,
-        contexto
+        contexto,
+        embedding
       )
-      VALUES ($1, $2, $3, $4, $5, $6)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING *;
     `;
     const rows = await query<Comparativa>(text, [
@@ -87,7 +117,8 @@ export const ComparativasModule = {
       data.comparativa ?? null,
       data.descripcion ?? null,
       data.categoria ?? null,
-      data.contexto ?? null
+      data.contexto ?? null,
+      formatEmbedding(data.embedding)
     ]);
     return rows[0];
   },
@@ -134,7 +165,12 @@ export const ComparativasModule = {
     }
 
     const setClauses = fields.map((field, idx) => `${field} = $${idx + 1}`);
-    const values: any[] = fields.map((field) => data[field]);
+    const values: any[] = fields.map((field) => {
+      if (field === 'embedding') {
+        return formatEmbedding(data.embedding);
+      }
+      return data[field];
+    });
     values.push(id);
 
     const text = `
@@ -344,6 +380,188 @@ export const ComparativasModule = {
     }
     const text = `UPDATE comparativas SET ${property} = $1 WHERE id = $2 RETURNING *;`;
     return queryOne<Comparativa>(text, [value, id]);
+  },
+
+  /**
+   * Modifica o asigna el embedding vectorial de una comparativa
+   */
+  async updateEmbedding(id: number, embedding: number[] | string | null): Promise<Comparativa | null> {
+    const formatted = formatEmbedding(embedding);
+    const text = 'UPDATE comparativas SET embedding = $1 WHERE id = $2 RETURNING *;';
+    return queryOne<Comparativa>(text, [formatted, id]);
+  },
+
+  /**
+   * Búsqueda por similitud semántica de coseno (Vector Similarity Search)
+   * 
+   * @param embedding Vector de consulta (768 dimensiones) o su representación en string '[0.1, 0.2, ...]'
+   * @param options Opciones de búsqueda: límite de registros, umbral mínimo de similitud y filtro por categoría
+   */
+  async findSimilar(
+    embedding: number[] | string,
+    options: {
+      limit?: number;
+      minSimilarity?: number;
+      categoria?: string;
+    } = {}
+  ): Promise<Array<Comparativa & { similarity: number }>> {
+    const { limit = 10, minSimilarity = 0, categoria } = options;
+    const formatted = formatEmbedding(embedding);
+
+    let text = `
+      SELECT 
+        id,
+        urls,
+        titulo,
+        comparativa,
+        descripcion,
+        categoria,
+        contexto,
+        embedding,
+        (1 - (embedding <=> $1::vector)) AS similarity
+      FROM comparativas
+      WHERE embedding IS NOT NULL
+    `;
+    const params: any[] = [formatted];
+
+    if (categoria) {
+      params.push(categoria);
+      text += ` AND categoria = $${params.length}`;
+    }
+
+    if (minSimilarity > 0) {
+      params.push(minSimilarity);
+      text += ` AND (1 - (embedding <=> $1::vector)) >= $${params.length}`;
+    }
+
+    params.push(limit);
+    text += ` ORDER BY embedding <=> $1::vector ASC LIMIT $${params.length};`;
+
+    return query<Comparativa & { similarity: number }>(text, params);
+  },
+
+  /**
+   * Búsqueda integral de comparativas (Semántica / Vectorial / Híbrida / Texto)
+   */
+  async buscar(
+    queryText: string,
+    options: SearchComparativaOptions = {}
+  ): Promise<ComparativaSearchResult[]> {
+    const {
+      limit = 10,
+      minSimilarity = 0,
+      categoria,
+      modo = 'hibrido',
+      embedding
+    } = options;
+
+    const trimmedQuery = (queryText || '').trim();
+    if (!trimmedQuery && !embedding) {
+      return [];
+    }
+
+    let vectorResultados: ComparativaSearchResult[] = [];
+    let textoResultados: ComparativaSearchResult[] = [];
+
+    // 1. Búsqueda Vectorial / Semántica
+    if (modo !== 'texto') {
+      let queryVector: number[] | string | null = (embedding !== undefined && embedding !== null) ? embedding : null;
+
+      if (!queryVector && trimmedQuery) {
+        try {
+          queryVector = await generateEmbedding(trimmedQuery);
+        } catch (err: any) {
+          console.warn('⚠️ No se pudo generar embedding para búsqueda de comparativas, usando texto:', err?.message);
+        }
+      }
+
+      if (queryVector) {
+        const similares = await this.findSimilar(queryVector, {
+          limit,
+          minSimilarity,
+          categoria
+        });
+        vectorResultados = similares.map((s) => ({
+          ...s,
+          similarity: Number(s.similarity),
+          matchType: 'vector' as const
+        }));
+      }
+    }
+
+    if (modo === 'semantico') {
+      return vectorResultados.slice(0, limit);
+    }
+
+    // 2. Búsqueda Textual (ILIKE en titulo, comparativa, descripcion, contexto)
+    if (trimmedQuery && (modo === 'texto' || modo === 'hibrido')) {
+      let textSql = `
+        SELECT 
+          id,
+          urls,
+          titulo,
+          comparativa,
+          descripcion,
+          categoria,
+          contexto,
+          embedding,
+          1.0::float AS similarity
+        FROM comparativas
+        WHERE (
+          titulo ILIKE $1
+          OR comparativa ILIKE $1
+          OR descripcion ILIKE $1
+          OR contexto ILIKE $1
+          OR $2 = ANY(urls)
+        )
+      `;
+      const params: any[] = [`%${trimmedQuery}%`, trimmedQuery];
+
+      if (categoria) {
+        params.push(categoria);
+        textSql += ` AND categoria = $${params.length}`;
+      }
+
+      params.push(limit);
+      textSql += ` ORDER BY id DESC LIMIT $${params.length};`;
+
+      const textRows = await query<Comparativa & { similarity: number }>(textSql, params);
+      textoResultados = textRows.map((r) => ({
+        ...r,
+        similarity: 1.0,
+        matchType: 'texto' as const
+      }));
+    }
+
+    if (modo === 'texto') {
+      return textoResultados.slice(0, limit);
+    }
+
+    // 3. Modo Híbrido: combinar resultados vectoriales y textuales sin duplicados
+    const mapa = new Map<number, ComparativaSearchResult>();
+
+    for (const item of vectorResultados) {
+      mapa.set(item.id, item);
+    }
+
+    for (const item of textoResultados) {
+      if (mapa.has(item.id)) {
+        const exist = mapa.get(item.id)!;
+        exist.matchType = 'hibrido';
+        exist.similarity = Math.min(1.0, (exist.similarity ?? 0.5) + 0.2);
+      } else {
+        mapa.set(item.id, {
+          ...item,
+          similarity: 0.5,
+          matchType: 'texto'
+        });
+      }
+    }
+
+    const combinados = Array.from(mapa.values());
+    combinados.sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0));
+
+    return combinados.slice(0, limit);
   }
 };
 

@@ -1,4 +1,5 @@
 import { query, queryOne } from '../db/index.js';
+import { generateEmbedding } from '../gemini/index.js';
 
 /**
  * Entidad Repositorio que representa una fila de la tabla 'repositorios'
@@ -12,6 +13,7 @@ export interface Repositorio {
   resumen: string | null;
   palabras_clave: string[] | null;
   contexto: string | null;
+  embedding?: number[] | string | null;
 }
 
 /**
@@ -25,6 +27,7 @@ export interface CreateRepositorioDto {
   resumen?: string | null;
   palabras_clave?: string[] | null;
   contexto?: string | null;
+  embedding?: number[] | string | null;
 }
 
 /**
@@ -38,6 +41,7 @@ export interface UpdateRepositorioDto {
   resumen?: string | null;
   palabras_clave?: string[] | null;
   contexto?: string | null;
+  embedding?: number[] | string | null;
 }
 
 /**
@@ -51,6 +55,25 @@ export interface RepositorioFilters {
   palabra_clave?: string;
 }
 
+/**
+ * Opciones para búsqueda semántica / híbrida de repositorios
+ */
+export interface SearchRepositorioOptions {
+  limit?: number;
+  minSimilarity?: number;
+  categoria?: string;
+  embedding?: number[] | string;
+  modo?: 'semantico' | 'hibrido' | 'texto';
+}
+
+/**
+ * Resultado de búsqueda con score de similitud y tipo de coincidencia
+ */
+export type RepositorioSearchResult = Repositorio & {
+  similarity: number;
+  matchType?: 'vector' | 'texto' | 'hibrido';
+};
+
 export type RepositorioProperty = keyof Omit<Repositorio, 'id'>;
 
 const ALLOWED_COLUMNS: Array<keyof Repositorio> = [
@@ -61,8 +84,14 @@ const ALLOWED_COLUMNS: Array<keyof Repositorio> = [
   'descripcion',
   'resumen',
   'palabras_clave',
-  'contexto'
+  'contexto',
+  'embedding'
 ];
+
+function formatEmbedding(embedding?: number[] | string | null): string | null {
+  if (!embedding) return null;
+  return Array.isArray(embedding) ? JSON.stringify(embedding) : String(embedding);
+}
 
 export const RepositoriosModule = {
   // ==========================================
@@ -81,9 +110,10 @@ export const RepositoriosModule = {
         descripcion,
         resumen,
         palabras_clave,
-        contexto
+        contexto,
+        embedding
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING *;
     `;
     const rows = await query<Repositorio>(text, [
@@ -93,7 +123,8 @@ export const RepositoriosModule = {
       data.descripcion ?? null,
       data.resumen ?? null,
       data.palabras_clave ?? null,
-      data.contexto ?? null
+      data.contexto ?? null,
+      formatEmbedding(data.embedding)
     ]);
     return rows[0];
   },
@@ -140,7 +171,12 @@ export const RepositoriosModule = {
     }
 
     const setClauses = fields.map((field, idx) => `${field} = $${idx + 1}`);
-    const values: any[] = fields.map((field) => data[field]);
+    const values: any[] = fields.map((field) => {
+      if (field === 'embedding') {
+        return formatEmbedding(data.embedding);
+      }
+      return data[field];
+    });
     values.push(id);
 
     const text = `
@@ -354,6 +390,193 @@ export const RepositoriosModule = {
     }
     const text = `UPDATE repositorios SET ${property} = $1 WHERE id = $2 RETURNING *;`;
     return queryOne<Repositorio>(text, [value, id]);
+  },
+
+  /**
+   * Modifica o asigna el embedding vectorial de un repositorio
+   */
+  async updateEmbedding(id: number, embedding: number[] | string | null): Promise<Repositorio | null> {
+    const formatted = formatEmbedding(embedding);
+    const text = 'UPDATE repositorios SET embedding = $1 WHERE id = $2 RETURNING *;';
+    return queryOne<Repositorio>(text, [formatted, id]);
+  },
+
+  /**
+   * Búsqueda por similitud semántica de coseno (Vector Similarity Search)
+   * 
+   * @param embedding Vector de consulta (768 dimensiones) o su representación en string '[0.1, 0.2, ...]'
+   * @param options Opciones de búsqueda: límite de registros, umbral mínimo de similitud y filtro por categoría
+   */
+  async findSimilar(
+    embedding: number[] | string,
+    options: {
+      limit?: number;
+      minSimilarity?: number;
+      categoria?: string;
+    } = {}
+  ): Promise<Array<Repositorio & { similarity: number }>> {
+    const { limit = 10, minSimilarity = 0, categoria } = options;
+    const formatted = formatEmbedding(embedding);
+
+    let text = `
+      SELECT 
+        id,
+        nom_arch,
+        ruta_arch,
+        categoria,
+        descripcion,
+        resumen,
+        palabras_clave,
+        contexto,
+        embedding,
+        (1 - (embedding <=> $1::vector)) AS similarity
+      FROM repositorios
+      WHERE embedding IS NOT NULL
+    `;
+    const params: any[] = [formatted];
+
+    if (categoria) {
+      params.push(categoria);
+      text += ` AND categoria = $${params.length}`;
+    }
+
+    if (minSimilarity > 0) {
+      params.push(minSimilarity);
+      text += ` AND (1 - (embedding <=> $1::vector)) >= $${params.length}`;
+    }
+
+    params.push(limit);
+    text += ` ORDER BY embedding <=> $1::vector ASC LIMIT $${params.length};`;
+
+    return query<Repositorio & { similarity: number }>(text, params);
+  },
+
+  /**
+   * Búsqueda integral de documentos (Semántica / Vectorial / Híbrida / Texto)
+   * 
+   * Si no se envía embedding, lo genera automáticamente con Gemini AI a partir del texto ingresado.
+   * En modo 'hibrido', combina la similitud semántica con coincidencias textuales léxicas.
+   */
+  async buscar(
+    queryText: string,
+    options: SearchRepositorioOptions = {}
+  ): Promise<RepositorioSearchResult[]> {
+    const {
+      limit = 10,
+      minSimilarity = 0,
+      categoria,
+      modo = 'hibrido',
+      embedding
+    } = options;
+
+    const trimmedQuery = (queryText || '').trim();
+    if (!trimmedQuery && !embedding) {
+      return [];
+    }
+
+    let vectorResultados: RepositorioSearchResult[] = [];
+    let textoResultados: RepositorioSearchResult[] = [];
+
+    // 1. Búsqueda Vectorial / Semántica
+    if (modo !== 'texto') {
+      let queryVector: number[] | string | null = (embedding !== undefined && embedding !== null) ? embedding : null;
+
+      if (!queryVector && trimmedQuery) {
+        try {
+          queryVector = await generateEmbedding(trimmedQuery);
+        } catch (err: any) {
+          console.warn('⚠️ No se pudo generar embedding para la búsqueda semántica, recurriendo a búsqueda textual:', err?.message);
+        }
+      }
+
+      if (queryVector) {
+        const similares = await this.findSimilar(queryVector, {
+          limit,
+          minSimilarity,
+          categoria
+        });
+        vectorResultados = similares.map((s) => ({
+          ...s,
+          similarity: Number(s.similarity),
+          matchType: 'vector' as const
+        }));
+      }
+    }
+
+    if (modo === 'semantico') {
+      return vectorResultados.slice(0, limit);
+    }
+
+    // 2. Búsqueda Textual (ILIKE en nom_arch, descripcion, resumen, contexto y ANY(palabras_clave))
+    if (trimmedQuery && (modo === 'texto' || modo === 'hibrido')) {
+      let textSql = `
+        SELECT 
+          id,
+          nom_arch,
+          ruta_arch,
+          categoria,
+          descripcion,
+          resumen,
+          palabras_clave,
+          contexto,
+          embedding,
+          1.0::float AS similarity
+        FROM repositorios
+        WHERE (
+          nom_arch ILIKE $1
+          OR descripcion ILIKE $1
+          OR resumen ILIKE $1
+          OR contexto ILIKE $1
+          OR $2 = ANY(palabras_clave)
+        )
+      `;
+      const params: any[] = [`%${trimmedQuery}%`, trimmedQuery.toLowerCase()];
+
+      if (categoria) {
+        params.push(categoria);
+        textSql += ` AND categoria = $${params.length}`;
+      }
+
+      params.push(limit);
+      textSql += ` ORDER BY id DESC LIMIT $${params.length};`;
+
+      const textRows = await query<Repositorio & { similarity: number }>(textSql, params);
+      textoResultados = textRows.map((r) => ({
+        ...r,
+        similarity: 1.0,
+        matchType: 'texto' as const
+      }));
+    }
+
+    if (modo === 'texto') {
+      return textoResultados.slice(0, limit);
+    }
+
+    // 3. Modo Híbrido: combinar resultados vectoriales y textuales sin duplicados
+    const mapa = new Map<number, RepositorioSearchResult>();
+
+    for (const item of vectorResultados) {
+      mapa.set(item.id, item);
+    }
+
+    for (const item of textoResultados) {
+      if (mapa.has(item.id)) {
+        const exist = mapa.get(item.id)!;
+        exist.matchType = 'hibrido';
+        exist.similarity = Math.min(1.0, (exist.similarity ?? 0.5) + 0.2);
+      } else {
+        mapa.set(item.id, {
+          ...item,
+          similarity: 0.5,
+          matchType: 'texto'
+        });
+      }
+    }
+
+    const combinados = Array.from(mapa.values());
+    combinados.sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0));
+
+    return combinados.slice(0, limit);
   }
 };
 

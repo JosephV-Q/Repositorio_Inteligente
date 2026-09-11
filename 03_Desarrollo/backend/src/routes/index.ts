@@ -9,6 +9,7 @@ import rolesRoutes from './roles.js';
 import repositoriosRoutes from './repositorios.js';
 import configuracionRoutes from './configuracion.js';
 import comparativasRoutes from './comparativas.js';
+import categoriasRoutes from './categorias.js';
 
 const mainRouter = Router();
 
@@ -25,5 +26,6 @@ mainRouter.use('/api/roles', rolesRoutes);
 mainRouter.use('/api/repositorios', repositoriosRoutes);
 mainRouter.use('/api/configuracion', configuracionRoutes);
 mainRouter.use('/api/comparativas', comparativasRoutes);
+mainRouter.use('/api/categorias', categoriasRoutes);
 
 export default mainRouter;

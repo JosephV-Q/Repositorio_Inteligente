@@ -7,7 +7,10 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "vercel-build": "tsc",
-    "db:init": "tsx src/db/init.ts"
+    "db:init": "tsx src/db/init.ts",
+    "test:upload": "tsx scripts/test_upload_flow.ts",
+    "test:gemini": "tsx scripts/test_gemini_connection.ts",
+    "test:api": "tsx scripts/test_api_endpoints.ts"
   },
   "keywords": [
     "vercel",

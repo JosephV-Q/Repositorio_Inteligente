@@ -28,6 +28,13 @@ export interface RequestUploadUrlParams {
    * Si no se especifica, toma GOOGLE_DRIVE_FOLDER_ID de .env.
    */
   folderId?: string;
+
+  /**
+   * Origen web del frontend (ej: 'https://test.utsvps.com' o 'http://localhost:3000').
+   * Es crucial para que Google Drive configure las cabeceras CORS ('Access-Control-Allow-Origin')
+   * en la sesión de subida resumible y permita al navegador realizar el PUT de bytes sin bloqueo.
+   */
+  origin?: string;
 }
 
 /**
@@ -220,6 +227,16 @@ export async function createDriveUploadUrl(params: RequestUploadUrlParams): Prom
     'Content-Type': 'application/json; charset=UTF-8',
     'X-Upload-Content-Type': cleanMimeType
   };
+
+  const configuredOrigin =
+    process.env.FRONTEND_ORIGIN?.trim() ||
+    process.env.CLIENT_ORIGIN?.trim() ||
+    process.env.FRONTEND_URL?.trim();
+
+  const clientOrigin = params.origin?.trim() || configuredOrigin;
+  if (clientOrigin) {
+    headers['Origin'] = clientOrigin;
+  }
 
   if (fileSize && fileSize > 0) {
     headers['X-Upload-Content-Length'] = String(fileSize);

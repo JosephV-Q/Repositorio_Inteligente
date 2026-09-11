@@ -28,7 +28,7 @@ export interface GeminiPromptRequest {
 
   /**
    * Modelo de Gemini a emplear.
-   * Por defecto: 'gemini-2.5-flash'
+   * Por defecto: 'gemini-3.6-flash' (o el configurado en GEMINI_DEFAULT_MODEL)
    */
   model?: string;
 
@@ -109,12 +109,28 @@ export function getGeminiClient(customApiKey?: string): GoogleGenAI {
  * });
  * console.log(res.text);
  */
+/**
+ * Mapeo de modelos obsoletos / deprecados a sus sustitutos vigentes recomendados por Google
+ */
+const DEPRECATED_MODELS_MAP: Record<string, string> = {
+  'gemini-2.5': 'gemini-3.6-flash',
+  'gemini-2.5-flash': 'gemini-3.6-flash',
+  'gemini-2.5-flash-lite': 'gemini-3.5-flash-lite',
+  'gemini-2.0-flash': 'gemini-3.6-flash',
+  'gemini-1.5-flash': 'gemini-3.6-flash',
+  'gemini-pro': 'gemini-3.6-flash'
+};
+
 export async function askGemini(params: GeminiPromptRequest): Promise<GeminiPromptResponse> {
+  const defaultModel = process.env.GEMINI_DEFAULT_MODEL || 'gemini-3.6-flash';
+  const rawModel = params.model || defaultModel;
+  // Resolver modelo vigente si se envió uno deprecado
+  const model = DEPRECATED_MODELS_MAP[rawModel] || rawModel;
+
   const {
     prompt,
     systemInstruction,
     context,
-    model = 'gemini-2.5-flash',
     temperature = 0.7,
     maxOutputTokens,
     apiKey
@@ -185,8 +201,158 @@ export async function askGemini(params: GeminiPromptRequest): Promise<GeminiProm
   }
 }
 
+/**
+ * Genera un vector embedding de 768 dimensiones para un texto utilizando Gemini
+ */
+export async function generateEmbedding(
+  text: string,
+  options: {
+    model?: string;
+    outputDimensionality?: number;
+    apiKey?: string;
+  } = {}
+): Promise<number[]> {
+  const {
+    model = process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-001',
+    outputDimensionality = 768,
+    apiKey
+  } = options;
+
+  if (!text || typeof text !== 'string' || text.trim().length === 0) {
+    throw new Error('No se puede generar embedding de un texto vacío.');
+  }
+
+  const ai = getGeminiClient(apiKey);
+  const response: any = await ai.models.embedContent({
+    model,
+    contents: text.trim(),
+    config: {
+      outputDimensionality
+    }
+  });
+
+  const values = response.embeddings?.[0]?.values;
+  if (!values || !Array.isArray(values)) {
+    throw new Error('La API de Gemini no retornó un vector embedding válido.');
+  }
+
+  return values;
+}
+
+export interface DocumentAnalysisResult {
+  nom_arch?: string;
+  categoria?: string;
+  descripcion: string;
+  resumen: string;
+  palabras_clave: string[];
+  contexto: string;
+}
+
+/**
+ * Analiza el texto bruto de un documento usando Gemini y extrae metadatos estructurados
+ */
+export async function analyzeDocumentText(
+  rawText: string,
+  options: {
+    availableCategories?: string[];
+    originalFileName?: string;
+    model?: string;
+    apiKey?: string;
+  } = {}
+): Promise<DocumentAnalysisResult> {
+  const {
+    availableCategories = [],
+    originalFileName,
+    model = 'gemini-flash-latest',
+    apiKey
+  } = options;
+
+  const categoriesContext = availableCategories.length > 0
+    ? `Categorías predefinidas disponibles en el sistema:\n${availableCategories.map((c) => `- "${c}"`).join('\n')}\nSi el contenido se ajusta a alguna de estas, selecciona la categoría exacta. Si no, sugiere una categoría breve y coherente.`
+    : 'Identifica una categoría temática general coherente.';
+
+  const systemInstruction = `Eres un asistente de catalogación y análisis de documentos.
+Tu tarea es analizar el texto suministrado y extraer sus metadatos principales.
+Debes responder ÚNICAMENTE con un objeto JSON estrictamente válido (sin bloques de código markdown, sin explicaciones antes o después) con la siguiente estructura:
+{
+  "nom_arch": "nombre_sugerido_del_archivo.pdf",
+  "categoria": "Categoría asignada",
+  "descripcion": "Descripción breve y concisa del contenido (máximo 3 oraciones)",
+  "resumen": "Resumen ejecutivo detallado y estructurado de las ideas, hechos y conclusiones principales del documento",
+  "palabras_clave": ["etiqueta1", "etiqueta2", "etiqueta3", "etiqueta4", "etiqueta5"],
+  "contexto": "Ámbito o contexto institucional/temático del texto"
+}
+
+${categoriesContext}`;
+
+  const prompt = originalFileName
+    ? `Nombre original del documento: "${originalFileName}"\n\nTexto del documento:\n${rawText.slice(0, 30000)}`
+    : `Texto del documento:\n${rawText.slice(0, 30000)}`;
+
+  let response = await askGemini({
+    model,
+    systemInstruction,
+    prompt,
+    temperature: 0.2,
+    apiKey
+  });
+
+  // Si el modelo principal está ocupado (503) o falla, reintentar con modelo alternativo
+  if (!response.success) {
+    const fallbackModel = model === 'gemini-flash-latest' ? 'gemini-3.8-flash' : 'gemini-flash-latest';
+    response = await askGemini({
+      model: fallbackModel,
+      systemInstruction,
+      prompt,
+      temperature: 0.2,
+      apiKey
+    });
+  }
+
+  // Si ambos fallaron (ej. corte de red o cuota excedida temporalmente), degradación elegante
+  if (!response.success || !response.text) {
+    const snippet = rawText.trim().slice(0, 500);
+    return {
+      nom_arch: originalFileName || 'documento_analizado.txt',
+      categoria: availableCategories[0] || 'General',
+      descripcion: snippet.slice(0, 200) || 'Documento procesado en modo de contingencia.',
+      resumen: snippet || 'Sin resumen disponible.',
+      palabras_clave: [],
+      contexto: 'General'
+    };
+  }
+
+  let cleanJson = response.text.trim();
+  if (cleanJson.startsWith('```')) {
+    cleanJson = cleanJson.replace(/^```json\s*/i, '').replace(/^```\s*/, '').replace(/```$/, '').trim();
+  }
+
+  try {
+    const parsed = JSON.parse(cleanJson);
+    return {
+      nom_arch: parsed.nom_arch || originalFileName || 'documento_analizado.txt',
+      categoria: parsed.categoria || (availableCategories[0] ?? 'General'),
+      descripcion: parsed.descripcion || 'Documento procesado automáticamente por IA.',
+      resumen: parsed.resumen || rawText.slice(0, 500),
+      palabras_clave: Array.isArray(parsed.palabras_clave) ? parsed.palabras_clave.map(String) : [],
+      contexto: parsed.contexto || 'General'
+    };
+  } catch {
+    return {
+      nom_arch: originalFileName || 'documento_analizado.txt',
+      categoria: availableCategories[0] || 'General',
+      descripcion: cleanJson.slice(0, 300),
+      resumen: cleanJson,
+      palabras_clave: [],
+      contexto: 'General'
+    };
+  }
+}
+
 export default {
   askGemini,
   getGeminiClient,
-  getGeminiApiKey
+  getGeminiApiKey,
+  generateEmbedding,
+  analyzeDocumentText
 };

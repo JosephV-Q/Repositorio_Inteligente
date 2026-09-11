@@ -112,7 +112,8 @@ export async function createComparativa(req: Request, res: Response): Promise<vo
       comparativa: comparativa ? String(comparativa).trim() : null,
       descripcion: descripcion ? String(descripcion).trim() : null,
       categoria: categoria ? String(categoria).trim() : null,
-      contexto: contexto ? String(contexto).trim() : null
+      contexto: contexto ? String(contexto).trim() : null,
+      embedding: req.body.embedding !== undefined ? req.body.embedding : undefined
     };
 
     const nuevaComparativa = await ComparativasModule.create(dto);
@@ -152,6 +153,7 @@ export async function updateComparativa(req: Request, res: Response): Promise<vo
     if (req.body.descripcion !== undefined) updateDto.descripcion = req.body.descripcion ? String(req.body.descripcion).trim() : null;
     if (req.body.categoria !== undefined) updateDto.categoria = req.body.categoria ? String(req.body.categoria).trim() : null;
     if (req.body.contexto !== undefined) updateDto.contexto = req.body.contexto ? String(req.body.contexto).trim() : null;
+    if (req.body.embedding !== undefined) updateDto.embedding = req.body.embedding;
 
     const actualizada = await ComparativasModule.update(id, updateDto);
 
@@ -279,6 +281,72 @@ export async function deleteComparativa(req: Request, res: Response): Promise<vo
   }
 }
 
+/**
+ * Realiza una búsqueda (semántica, híbrida o texto) en comparativas
+ * GET /api/comparativas/buscar?q=...&categoria=...&limit=...&minSimilarity=...&modo=...
+ * POST /api/comparativas/buscar
+ * Body: { texto?: string, query?: string, q?: string, categoria?: string, limit?: number, minSimilarity?: number, modo?: string, embedding?: number[] }
+ */
+export async function buscarComparativas(req: Request, res: Response): Promise<void> {
+  try {
+    const rawQuery = (
+      req.query.q ||
+      req.query.query ||
+      req.query.texto ||
+      req.body?.texto ||
+      req.body?.query ||
+      req.body?.q
+    );
+
+    const queryText = typeof rawQuery === 'string' ? rawQuery.trim() : '';
+
+    const rawCategoria = req.query.categoria || req.body?.categoria;
+    const categoria = rawCategoria ? String(rawCategoria).trim() : undefined;
+
+    const rawLimit = req.query.limit || req.body?.limit;
+    const limit = rawLimit ? Math.min(100, Math.max(1, Number(rawLimit))) : 10;
+
+    const rawMinSim = req.query.minSimilarity || req.body?.minSimilarity;
+    const minSimilarity = rawMinSim ? Number(rawMinSim) : 0;
+
+    const rawModo = req.query.modo || req.body?.modo || 'hibrido';
+    const modo = String(rawModo) as 'semantico' | 'hibrido' | 'texto';
+
+    const embedding = req.body?.embedding;
+
+    if (!queryText && !embedding) {
+      res.status(400).json({
+        success: false,
+        error: 'Debes proporcionar un término de búsqueda ("texto", "query" o "q") o un "embedding".'
+      });
+      return;
+    }
+
+    const resultados = await ComparativasModule.buscar(queryText, {
+      limit,
+      minSimilarity,
+      categoria,
+      modo,
+      embedding
+    });
+
+    res.status(200).json({
+      success: true,
+      query: queryText,
+      total: resultados.length,
+      modo,
+      data: resultados
+    });
+  } catch (err: any) {
+    console.error('❌ Error en buscarComparativas:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Error al realizar la búsqueda en comparativas.',
+      details: err?.message
+    });
+  }
+}
+
 export default {
   getComparativas,
   getComparativaById,
@@ -286,5 +354,6 @@ export default {
   updateComparativa,
   addUrlToComparativa,
   removeUrlFromComparativa,
-  deleteComparativa
+  deleteComparativa,
+  buscarComparativas
 };

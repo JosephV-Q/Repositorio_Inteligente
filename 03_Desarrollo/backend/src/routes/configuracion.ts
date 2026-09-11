@@ -8,11 +8,23 @@ import {
   removeCategoriaFromConfig,
   deleteConfiguracion
 } from '../controllers/configuracion.controller.js';
+import {
+  getCategorias,
+  createCategoria,
+  updateCategoria,
+  deleteCategoria
+} from '../controllers/categorias.controller.js';
 
 const router = Router();
 
 // 1. Listar o buscar configuraciones
 router.get('/', getConfiguraciones);
+
+// 1.1 Rutas de conveniencia para gestión directa de categorías sin requerir ID
+router.get('/categorias', getCategorias);
+router.post('/categorias', createCategoria);
+router.put('/categorias/:nombre', updateCategoria);
+router.delete('/categorias/:nombre', deleteCategoria);
 
 // 2. Obtener una configuración por ID
 router.get('/:id', getConfiguracionById);

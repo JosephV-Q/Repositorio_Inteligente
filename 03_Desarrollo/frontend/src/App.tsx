@@ -9,6 +9,7 @@ import { RegisterWithInvitation } from "./components/RegisterWithInvitation";
 import { Sidebar } from "./components/Sidebar";
 import { Topbar } from "./components/Topbar";
 import { UploadModal } from "./components/UploadModal";
+import { ChatBotWidget } from "./components/ChatBotWidget";
 import { AuthProvider } from "./context/AuthProvider";
 import { useAuth } from "./context/AuthContext";
 import { categories as defaultCategories, documents as initialDocuments } from "./data/documents";
@@ -16,9 +17,10 @@ import { api } from "./services/api";
 import type { DocumentItem } from "./types/document";
 
 function MainContent() {
-  const { isAuthenticated, isLoading, user } = useAuth();
+  const { isAuthenticated, isLoading, user, isAdmin } = useAuth();
 
   const [docList, setDocList] = useState<DocumentItem[]>(initialDocuments);
+  const [categoriesList, setCategoriesList] = useState<string[]>(defaultCategories);
   const [activeCategory, setActiveCategory] = useState("Todas las categorías");
   const [isRvdMode, setIsRvdMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -30,6 +32,31 @@ function MainContent() {
   const [mobileMenu, setMobileMenu] = useState(false);
   const [showDashboard, setShowDashboard] = useState(false);
 
+  // Limitantes específicas por rol:
+  // - Rol 3 (Usuario / Lector): No sube archivos, no realiza RVD, no ve Dashboard.
+  // - Rol 1 (Admin): Único con acceso a Dashboard y gestión (añadir/eliminar) de categorías.
+  // - Rol 1 y 2: Pueden eliminar documentos.
+  const isUserRole3 = user?.rol === 3;
+  const canViewDashboard = isAdmin;
+  const canManageCategories = isAdmin;
+  const canUpload = !isUserRole3;
+  const canRvd = !isUserRole3;
+  const canDeleteDocument = !isUserRole3;
+
+  // Si no tiene permisos para el Dashboard o RVD, forzar apagado
+  useEffect(() => {
+    if (!canViewDashboard && showDashboard) {
+      setShowDashboard(false);
+    }
+  }, [canViewDashboard, showDashboard]);
+
+  useEffect(() => {
+    if (!canRvd && isRvdMode) {
+      setIsRvdMode(false);
+      setSelectedIds([]);
+    }
+  }, [canRvd, isRvdMode]);
+
   // Detección de token de invitación en la URL (?token=XYZ)
   const [invitationToken, setInvitationToken] = useState<string | null>(() => {
     if (typeof window !== "undefined") {
@@ -37,6 +64,17 @@ function MainContent() {
       return params.get("token") || null;
     }
     return null;
+  });
+
+  // Estado para alternar entre vista de inicio de sesión y registro
+  const [authView, setAuthView] = useState<"login" | "register">(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("token")) {
+        return "register";
+      }
+    }
+    return "login";
   });
 
   // Carga inicial de repositorios reales desde la base de datos Neon
@@ -90,11 +128,45 @@ function MainContent() {
 
   const categoryCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const cat of defaultCategories) {
+    for (const cat of categoriesList) {
       counts[cat] = docList.filter((doc) => doc.category === cat).length;
     }
     return counts;
-  }, [docList]);
+  }, [docList, categoriesList]);
+
+  const handleAddCategory = (newCategory: string) => {
+    const trimmed = newCategory.trim();
+    if (!trimmed) return;
+    if (categoriesList.some((c) => c.toLowerCase() === trimmed.toLowerCase())) {
+      setToastMessage(`La categoría "${trimmed}" ya existe.`);
+      setTimeout(() => setToastMessage(null), 3000);
+      return;
+    }
+    setCategoriesList((prev) => [...prev, trimmed]);
+    setToastMessage(`Categoría "${trimmed}" creada.`);
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  const handleDeleteCategory = (categoryToDelete: string) => {
+    setCategoriesList((prev) => prev.filter((c) => c !== categoryToDelete));
+    if (activeCategory === categoryToDelete) {
+      setActiveCategory("Todas las categorías");
+    }
+    setToastMessage(`Categoría "${categoryToDelete}" eliminada.`);
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  const handleDeleteDocument = (id: string) => {
+    const doc = docList.find((d) => d.id === id);
+    const title = doc?.title || id;
+    setDocList((prev) => prev.filter((d) => d.id !== id));
+    setSelectedIds((prev) => prev.filter((selectedId) => selectedId !== id));
+    if (activeDocument?.id === id) {
+      setActiveDocument(null);
+    }
+    setToastMessage(`Documento "${title}" eliminado.`);
+    setTimeout(() => setToastMessage(null), 3500);
+  };
 
   const visibleDocuments = useMemo(() => {
     const filtered = docList.filter((document) => {
@@ -113,7 +185,7 @@ function MainContent() {
 
   const clearSelection = () => setSelectedIds([]);
   const openDocument = (document: DocumentItem) => {
-    if (isRvdMode) {
+    if (isRvdMode && canRvd) {
       setSelectedIds((current) =>
         current.includes(document.id)
           ? current.filter((id) => id !== document.id)
@@ -124,6 +196,7 @@ function MainContent() {
     }
   };
   const toggleRvdMode = () => {
+    if (!canRvd) return;
     setIsRvdMode(!isRvdMode);
     clearSelection();
   };
@@ -156,12 +229,13 @@ function MainContent() {
     );
   }
 
-  // 2. Flujo de registro por invitación (?token=XYZ)
-  if (!isAuthenticated && invitationToken) {
+  // 2. Flujo de registro (por invitación en URL ?token=XYZ o al pulsar Registrarse)
+  if (!isAuthenticated && (authView === "register" || invitationToken)) {
     return (
       <RegisterWithInvitation
         token={invitationToken}
         onCancel={() => {
+          setAuthView("login");
           setInvitationToken(null);
           if (window.history.pushState) {
             const url = new URL(window.location.href);
@@ -170,6 +244,7 @@ function MainContent() {
           }
         }}
         onSuccess={() => {
+          setAuthView("login");
           setInvitationToken(null);
           if (window.history.pushState) {
             const url = new URL(window.location.href);
@@ -183,7 +258,7 @@ function MainContent() {
 
   // 3. Pantalla de Login del Administrador
   if (!isAuthenticated) {
-    return <AdminLogin />;
+    return <AdminLogin onRegister={() => setAuthView("register")} />;
   }
 
   // 4. Shell principal cuando el usuario está autenticado
@@ -192,17 +267,24 @@ function MainContent() {
       <Sidebar
         activeCategory={activeCategory}
         mobileMenu={mobileMenu}
+        categories={categoriesList}
         totalDocuments={docList.length}
         categoryCounts={categoryCounts}
+        canViewDashboard={canViewDashboard}
+        canManageCategories={canManageCategories}
         onCategoryChange={(category) => {
           setActiveCategory(category);
           setShowDashboard(false);
           setMobileMenu(false);
         }}
         onDashboardClick={() => {
-          setShowDashboard(true);
-          setMobileMenu(false);
+          if (canViewDashboard) {
+            setShowDashboard(true);
+            setMobileMenu(false);
+          }
         }}
+        onAddCategory={handleAddCategory}
+        onDeleteCategory={handleDeleteCategory}
       />
       <main className="main-area">
         <Topbar
@@ -211,26 +293,32 @@ function MainContent() {
           onMenuToggle={() => setMobileMenu(!mobileMenu)}
           onAccountOpen={() => setShowAccount(true)}
         />
-        {showDashboard ? (
+        {showDashboard && canViewDashboard ? (
           <Dashboard
             documents={docList}
-            categories={defaultCategories}
+            categories={categoriesList}
             onBack={() => setShowDashboard(false)}
           />
         ) : (
           <DocumentLibrary
             activeCategory={activeCategory}
             documents={visibleDocuments}
-            isRvdMode={isRvdMode}
+            isRvdMode={isRvdMode && canRvd}
             selectedIds={selectedIds}
-            onRvdToggle={toggleRvdMode}
+            canUpload={canUpload}
+            canRvd={canRvd}
+            canDeleteDocument={canDeleteDocument}
+            onRvdToggle={() => {
+              if (canRvd) toggleRvdMode();
+            }}
             onDocumentOpen={openDocument}
             onRvdClose={closeRvdMode}
-            onUploadClick={() => setShowUploadModal(true)}
+            onUploadClick={canUpload ? () => setShowUploadModal(true) : undefined}
+            onDeleteDocument={canDeleteDocument ? handleDeleteDocument : undefined}
           />
         )}
       </main>
-      {selectedIds.length > 0 && (
+      {selectedIds.length > 0 && canRvd && (
         <div className="selection-dock">
           <span>
             <Check size={16} /> {selectedIds.length} seleccionados
@@ -255,7 +343,9 @@ function MainContent() {
       {activeDocument && (
         <DocumentDetail
           document={activeDocument}
+          canDelete={canDeleteDocument}
           onClose={() => setActiveDocument(null)}
+          onDelete={canDeleteDocument ? handleDeleteDocument : undefined}
         />
       )}
       {showAccount && <AccountPanel onClose={() => setShowAccount(false)} />}
@@ -278,6 +368,10 @@ function MainContent() {
           </button>
         </div>
       )}
+      <ChatBotWidget
+        activeDocument={activeDocument}
+        activeCategory={activeCategory}
+      />
     </div>
   );
 }

@@ -1,8 +1,18 @@
-import { ArrowRight, Copy, FileText, Maximize2, Sparkles, UserRound, X } from "lucide-react";
+import { ArrowRight, Copy, FileText, Maximize2, Sparkles, Trash2, UserRound, X } from "lucide-react";
 import type { DocumentItem } from "../types/document";
 
 // Presenta el resumen inteligente y los metadatos del documento seleccionado.
-export function DocumentDetail({ document, onClose }: { document: DocumentItem; onClose: () => void }) {
+export function DocumentDetail({
+  document,
+  canDelete = false,
+  onClose,
+  onDelete,
+}: {
+  document: DocumentItem;
+  canDelete?: boolean;
+  onClose: () => void;
+  onDelete?: (id: string) => void;
+}) {
   return (
     <div className="overlay">
       <section className="detail-panel">
@@ -28,7 +38,7 @@ export function DocumentDetail({ document, onClose }: { document: DocumentItem; 
             <span className="category-pill">
               <span /> {document.category} / Finanzas
             </span>
-            <div>
+            <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
               <button
                 type="button"
                 className="primary-button"
@@ -49,6 +59,21 @@ export function DocumentDetail({ document, onClose }: { document: DocumentItem; 
                   }}
                 >
                   Abrir Drive
+                </button>
+              )}
+              {canDelete && onDelete && (
+                <button
+                  type="button"
+                  className="danger-button"
+                  title="Eliminar este documento"
+                  onClick={() => {
+                    if (window.confirm(`¿Seguro que deseas eliminar el documento "${document.title}"?`)) {
+                      onDelete(document.id);
+                      onClose();
+                    }
+                  }}
+                >
+                  <Trash2 size={14} /> Eliminar
                 </button>
               )}
             </div>

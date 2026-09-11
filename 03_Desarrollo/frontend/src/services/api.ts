@@ -1,6 +1,8 @@
 import { ApiClient, ApiClientError } from '../../client/ApiClient';
+import { GeminiChatBot, createChatBot } from '../../client/GeminiChatBot';
 export type * from '../../client/ApiClient';
-export { ApiClient, ApiClientError };
+export type * from '../../client/GeminiChatBot';
+export { ApiClient, ApiClientError, GeminiChatBot, createChatBot };
 
 type UnauthorizedCallback = () => void;
 let unauthorizedCallback: UnauthorizedCallback | null = null;
@@ -24,4 +26,11 @@ export const api = new ApiClient({
   },
 });
 
+export const chatBot = new GeminiChatBot({
+  client: api,
+  botName: 'DocuHub AI',
+  storageKey: 'docuhub_gemini_chat_history'
+});
+
 export default api;
+

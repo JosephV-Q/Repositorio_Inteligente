@@ -26,12 +26,17 @@ export { default as ComparativasModule } from './comparativas.js';
 export * from './invitaciones.js';
 export { default as InvitacionesModule } from './invitaciones.js';
 
+// Módulo Categorías
+export * from './categorias.js';
+export { default as CategoriasModule } from './categorias.js';
+
 import UsuariosModule from './usuarios.js';
 import RolesModule from './roles.js';
 import RepositoriosModule from './repositorios.js';
 import ConfiguracionModule from './configuracion.js';
 import ComparativasModule from './comparativas.js';
 import InvitacionesModule from './invitaciones.js';
+import CategoriasModule from './categorias.js';
 
 export const dbModules = {
   usuarios: UsuariosModule,
@@ -39,7 +44,8 @@ export const dbModules = {
   repositorios: RepositoriosModule,
   configuracion: ConfiguracionModule,
   comparativas: ComparativasModule,
-  invitaciones: InvitacionesModule
+  invitaciones: InvitacionesModule,
+  categorias: CategoriasModule
 };
 
 export default dbModules;

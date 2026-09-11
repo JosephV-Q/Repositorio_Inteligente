@@ -3,13 +3,18 @@ import {
   RepositoriosModule,
   Repositorio,
   CreateRepositorioDto,
-  UpdateRepositorioDto
+  UpdateRepositorioDto,
+  ConfiguracionModule
 } from '../modules/index.js';
 import {
   createDriveUploadUrl,
   getDriveFileMetadata,
   isGoogleDriveConfigured
 } from '../drive/index.js';
+import {
+  analyzeDocumentText,
+  generateEmbedding
+} from '../gemini/index.js';
 
 /**
  * 1. Genera un enlace prefirmado de Google Drive para subida directa
@@ -22,7 +27,7 @@ import {
  */
 export async function requestUploadUrl(req: Request, res: Response): Promise<void> {
   try {
-    const { fileName, mimeType, fileSize, folderId } = req.body;
+    const { fileName, mimeType, fileSize, folderId, origin: bodyOrigin } = req.body;
 
     if (!fileName || typeof fileName !== 'string' || fileName.trim().length === 0) {
       res.status(400).json({
@@ -37,11 +42,33 @@ export async function requestUploadUrl(req: Request, res: Response): Promise<voi
       return;
     }
 
+    const envOrigin =
+      process.env.FRONTEND_ORIGIN?.trim() ||
+      process.env.CLIENT_ORIGIN?.trim() ||
+      process.env.FRONTEND_URL?.trim();
+
+    // Determinar origen del cliente para configurar CORS en Google Drive (Access-Control-Allow-Origin)
+    let clientOrigin: string | undefined;
+    if (bodyOrigin && typeof bodyOrigin === 'string' && bodyOrigin.trim().length > 0) {
+      clientOrigin = bodyOrigin.trim();
+    } else if (req.headers.origin && typeof req.headers.origin === 'string') {
+      clientOrigin = req.headers.origin.trim();
+    } else if (req.headers.referer && typeof req.headers.referer === 'string') {
+      try {
+        clientOrigin = new URL(req.headers.referer).origin;
+      } catch {
+        // Ignorar si el referer no es una URL parseable
+      }
+    } else if (envOrigin) {
+      clientOrigin = envOrigin;
+    }
+
     const driveResult = await createDriveUploadUrl({
       fileName: fileName.trim(),
       mimeType: mimeType ? String(mimeType).trim() : undefined,
       fileSize: fileSize !== undefined ? Number(fileSize) : undefined,
-      folderId: folderId ? String(folderId).trim() : undefined
+      folderId: folderId ? String(folderId).trim() : undefined,
+      origin: clientOrigin
     });
 
     if (!driveResult.success) {
@@ -150,7 +177,8 @@ export async function createRepositorio(req: Request, res: Response): Promise<vo
       descripcion: descripcion ? String(descripcion).trim() : null,
       resumen: resumen ? String(resumen).trim() : null,
       palabras_clave: Array.isArray(palabras_clave) ? palabras_clave.map(String) : null,
-      contexto: contexto ? String(contexto).trim() : null
+      contexto: contexto ? String(contexto).trim() : null,
+      embedding: req.body.embedding !== undefined ? req.body.embedding : undefined
     };
 
     const nuevoRepositorio = await RepositoriosModule.create(dto);
@@ -313,6 +341,183 @@ export async function deleteRepositorio(req: Request, res: Response): Promise<vo
   }
 }
 
+/**
+ * 8. Procesa el texto bruto de un documento con Gemini, genera metadatos, embedding y lo registra en repositorios
+ * POST /api/repositorios/procesar-texto
+ * Body: {
+ *   texto: string (obligatorio),
+ *   nom_arch?: string,
+ *   ruta_arch?: string,
+ *   driveFileId?: string,
+ *   categoria?: string,
+ *   contexto?: string
+ * }
+ */
+export async function procesarTextoYCrearRepositorio(req: Request, res: Response): Promise<void> {
+  try {
+    const {
+      texto,
+      nom_arch,
+      ruta_arch,
+      driveFileId,
+      categoria: categoriaManual,
+      contexto: contextoManual
+    } = req.body;
+
+    if (!texto || typeof texto !== 'string' || texto.trim().length === 0) {
+      res.status(400).json({
+        success: false,
+        error: 'El campo "texto" es obligatorio y debe contener el contenido del documento.'
+      });
+      return;
+    }
+
+    // 1. Obtener categorías disponibles en el sistema para orientar a la IA
+    let availableCategories: string[] = [];
+    try {
+      const configs = await ConfiguracionModule.findAll({ limit: 1 });
+      if (configs.length > 0 && Array.isArray(configs[0].categorias)) {
+        availableCategories = configs[0].categorias;
+      }
+    } catch (catErr: any) {
+      console.warn('⚠️ No se pudieron cargar categorías desde configuración:', catErr?.message);
+    }
+
+    // 2. Analizar el texto con Gemini para extraer metadatos estructurados
+    const analysis = await analyzeDocumentText(texto.trim(), {
+      availableCategories,
+      originalFileName: nom_arch ? String(nom_arch).trim() : undefined
+    });
+
+    // 3. Generar embedding vectorial de 768 dimensiones
+    const textToEmbed = `${analysis.resumen} ${analysis.descripcion} ${analysis.palabras_clave.join(' ')}`;
+    let vectorEmbedding: number[] | null = null;
+    try {
+      vectorEmbedding = await generateEmbedding(textToEmbed);
+    } catch (embedErr: any) {
+      console.error('⚠️ Error al generar embedding con Gemini:', embedErr?.message);
+    }
+
+    // 4. Determinar enlace/ruta del archivo
+    let finalRuta = ruta_arch ? String(ruta_arch).trim() : '';
+    if (driveFileId && typeof driveFileId === 'string' && driveFileId.trim().length > 0) {
+      try {
+        const fileMeta = await getDriveFileMetadata(driveFileId.trim());
+        finalRuta = fileMeta.webViewLink || fileMeta.webContentLink || `https://drive.google.com/file/d/${driveFileId.trim()}/view`;
+      } catch {
+        finalRuta = `https://drive.google.com/file/d/${driveFileId.trim()}/view`;
+      }
+    }
+
+    if (!finalRuta) {
+      finalRuta = 'texto-plano';
+    }
+
+    // 5. Preparar datos para registrar en la tabla 'repositorios'
+    const finalNomArch = (nom_arch && typeof nom_arch === 'string' && nom_arch.trim().length > 0)
+      ? nom_arch.trim()
+      : (analysis.nom_arch || 'documento_analizado.pdf');
+
+    const dto: CreateRepositorioDto = {
+      nom_arch: finalNomArch,
+      ruta_arch: finalRuta,
+      categoria: categoriaManual ? String(categoriaManual).trim() : (analysis.categoria || null),
+      descripcion: analysis.descripcion,
+      resumen: analysis.resumen,
+      palabras_clave: analysis.palabras_clave,
+      contexto: contextoManual ? String(contextoManual).trim() : analysis.contexto,
+      embedding: vectorEmbedding
+    };
+
+    const nuevoRepositorio = await RepositoriosModule.create(dto);
+
+    res.status(201).json({
+      success: true,
+      message: 'Texto procesado por IA y registrado exitosamente en el repositorio.',
+      analysis: {
+        nom_arch_sugerido: analysis.nom_arch,
+        categoria_asignada: dto.categoria,
+        contexto_asignado: dto.contexto,
+        embedding_generado: vectorEmbedding !== null
+      },
+      data: nuevoRepositorio
+    });
+  } catch (err: any) {
+    console.error('❌ Error en procesarTextoYCrearRepositorio:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Error al procesar el texto y registrar el repositorio con IA.',
+      details: err?.message
+    });
+  }
+}
+
+/**
+ * Realiza una búsqueda avanzada (semántica, híbrida o por texto) en repositorios de documentos
+ * GET /api/repositorios/buscar?q=...&categoria=...&limit=...&minSimilarity=...&modo=...
+ * POST /api/repositorios/buscar
+ * Body: { texto?: string, query?: string, q?: string, categoria?: string, limit?: number, minSimilarity?: number, modo?: string, embedding?: number[] }
+ */
+export async function buscarRepositorios(req: Request, res: Response): Promise<void> {
+  try {
+    const rawQuery = (
+      req.query.q ||
+      req.query.query ||
+      req.query.texto ||
+      req.body?.texto ||
+      req.body?.query ||
+      req.body?.q
+    );
+
+    const queryText = typeof rawQuery === 'string' ? rawQuery.trim() : '';
+
+    const rawCategoria = req.query.categoria || req.body?.categoria;
+    const categoria = rawCategoria ? String(rawCategoria).trim() : undefined;
+
+    const rawLimit = req.query.limit || req.body?.limit;
+    const limit = rawLimit ? Math.min(100, Math.max(1, Number(rawLimit))) : 10;
+
+    const rawMinSim = req.query.minSimilarity || req.body?.minSimilarity;
+    const minSimilarity = rawMinSim ? Number(rawMinSim) : 0;
+
+    const rawModo = req.query.modo || req.body?.modo || 'hibrido';
+    const modo = String(rawModo) as 'semantico' | 'hibrido' | 'texto';
+
+    const embedding = req.body?.embedding;
+
+    if (!queryText && !embedding) {
+      res.status(400).json({
+        success: false,
+        error: 'Debes proporcionar un término de búsqueda ("texto", "query" o "q") o un "embedding".'
+      });
+      return;
+    }
+
+    const resultados = await RepositoriosModule.buscar(queryText, {
+      limit,
+      minSimilarity,
+      categoria,
+      modo,
+      embedding
+    });
+
+    res.status(200).json({
+      success: true,
+      query: queryText,
+      total: resultados.length,
+      modo,
+      data: resultados
+    });
+  } catch (err: any) {
+    console.error('❌ Error en buscarRepositorios:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Error al realizar la búsqueda en repositorios.',
+      details: err?.message
+    });
+  }
+}
+
 export default {
   requestUploadUrl,
   getDriveConfigStatus,
@@ -320,5 +525,7 @@ export default {
   getRepositorios,
   getRepositorioById,
   updateRepositorio,
-  deleteRepositorio
+  deleteRepositorio,
+  procesarTextoYCrearRepositorio,
+  buscarRepositorios
 };

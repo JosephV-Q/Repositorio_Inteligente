@@ -76,6 +76,7 @@ export interface Repositorio {
   resumen: string | null;
   palabras_clave: string[] | null;
   contexto: string | null;
+  embedding?: number[] | string | null;
 }
 
 export interface CreateRepositorioDto {
@@ -87,6 +88,7 @@ export interface CreateRepositorioDto {
   resumen?: string | null;
   palabras_clave?: string[] | null;
   contexto?: string | null;
+  embedding?: number[] | string | null;
 }
 
 export interface UpdateRepositorioDto {
@@ -98,6 +100,7 @@ export interface UpdateRepositorioDto {
   resumen?: string | null;
   palabras_clave?: string[] | null;
   contexto?: string | null;
+  embedding?: number[] | string | null;
 }
 
 export interface RepositorioFilters {
@@ -108,6 +111,43 @@ export interface RepositorioFilters {
   palabra_clave?: string;
   limit?: number;
   offset?: number;
+}
+
+export interface ProcesarTextoDocumentoDto {
+  texto: string;
+  nom_arch?: string;
+  ruta_arch?: string;
+  driveFileId?: string;
+  categoria?: string;
+  contexto?: string;
+}
+
+export interface ProcesarTextoResponse {
+  success: boolean;
+  message: string;
+  analysis: {
+    nom_arch_sugerido?: string;
+    categoria_asignada?: string | null;
+    contexto_asignado?: string | null;
+    embedding_generado: boolean;
+  };
+  data: Repositorio;
+}
+
+export interface BuscarRepositoriosParams {
+  texto?: string;
+  query?: string;
+  q?: string;
+  categoria?: string;
+  limit?: number;
+  minSimilarity?: number;
+  modo?: 'semantico' | 'hibrido' | 'texto';
+  embedding?: number[];
+}
+
+export interface RepositorioSearchResult extends Repositorio {
+  similarity?: number;
+  matchType?: 'vector' | 'texto' | 'hibrido';
 }
 
 export interface Configuracion {
@@ -134,6 +174,47 @@ export interface ConfiguracionFilters {
   offset?: number;
 }
 
+export interface Categoria {
+  nombre: string;
+  repositoriosCount?: number;
+  comparativasCount?: number;
+}
+
+export interface CreateCategoriaDto {
+  nombre: string;
+}
+
+export interface UpdateCategoriaDto {
+  nuevoNombre: string;
+  actualizarReferencias?: boolean;
+}
+
+export interface CategoriaFilters {
+  search?: string;
+}
+
+export interface CategoriaDetalle {
+  nombre: string;
+  repositoriosCount: number;
+  comparativasCount: number;
+}
+
+export interface CategoriaUpdateResult {
+  nombreAnterior: string;
+  nuevoNombre: string;
+  repositoriosActualizados: number;
+  comparativasActualizadas: number;
+  todas: string[];
+}
+
+export interface CategoriaDeleteResult {
+  eliminada: string;
+  reasignadaA: string | null;
+  repositoriosAfectados: number;
+  comparativasAfectadas: number;
+  todas: string[];
+}
+
 export interface Comparativa {
   id: number;
   urls: string[];
@@ -142,6 +223,7 @@ export interface Comparativa {
   descripcion: string | null;
   categoria: string | null;
   contexto: string | null;
+  embedding?: number[] | string | null;
 }
 
 export interface CreateComparativaDto {
@@ -151,6 +233,7 @@ export interface CreateComparativaDto {
   descripcion?: string | null;
   categoria?: string | null;
   contexto?: string | null;
+  embedding?: number[] | string | null;
 }
 
 export interface UpdateComparativaDto {
@@ -160,6 +243,7 @@ export interface UpdateComparativaDto {
   descripcion?: string | null;
   categoria?: string | null;
   contexto?: string | null;
+  embedding?: number[] | string | null;
 }
 
 export interface ComparativaFilters {
@@ -170,6 +254,22 @@ export interface ComparativaFilters {
   url?: string;
   limit?: number;
   offset?: number;
+}
+
+export interface BuscarComparativasParams {
+  texto?: string;
+  query?: string;
+  q?: string;
+  categoria?: string;
+  limit?: number;
+  minSimilarity?: number;
+  modo?: 'semantico' | 'hibrido' | 'texto';
+  embedding?: number[];
+}
+
+export interface ComparativaSearchResult extends Comparativa {
+  similarity?: number;
+  matchType?: 'vector' | 'texto' | 'hibrido';
 }
 
 export interface Invitacion {
@@ -338,6 +438,7 @@ export interface DriveUploadUrlRequest {
   mimeType?: string;
   fileSize?: number;
   folderId?: string;
+  origin?: string;
 }
 
 export interface DriveUploadUrlResponse {
@@ -715,6 +816,17 @@ export class ApiClient {
     return responseData as T;
   }
 
+  /**
+   * Extrae la propiedad 'data' de la respuesta si viene encapsulada por el backend.
+   */
+  private unwrapData<T>(res: any): T {
+    if (res && typeof res === 'object' && 'data' in res && res.data !== undefined) {
+      return res.data as T;
+    }
+    return res as T;
+  }
+
+
   // ==========================================================================
   // 6. MÉTODOS DE AUTENTICACIÓN Y SESIÓN (/api/auth)
   // ==========================================================================
@@ -822,58 +934,64 @@ export class ApiClient {
    * Lista usuarios con filtros opcionales (nombre, gmail, rol, limit, offset).
    */
   public async getUsuarios(filters?: UsuarioFilters): Promise<Usuario[]> {
-    return this.request<Usuario[]>('/api/usuarios', {
+    const res = await this.request<any>('/api/usuarios', {
       method: 'GET',
       query: filters
     });
+    return this.unwrapData<Usuario[]>(res);
   }
 
   /**
    * Obtiene un usuario por su ID primario.
    */
   public async getUsuarioById(id: number): Promise<Usuario> {
-    return this.request<Usuario>(`/api/usuarios/${id}`, {
+    const res = await this.request<any>(`/api/usuarios/${id}`, {
       method: 'GET'
     });
+    return this.unwrapData<Usuario>(res);
   }
 
   /**
    * Busca un usuario específico por su dirección de correo (gmail).
    */
   public async getUsuarioByGmail(gmail: string): Promise<Usuario> {
-    return this.request<Usuario>(`/api/usuarios/buscar/gmail/${encodeURIComponent(gmail)}`, {
+    const res = await this.request<any>(`/api/usuarios/buscar/gmail/${encodeURIComponent(gmail)}`, {
       method: 'GET'
     });
+    return this.unwrapData<Usuario>(res);
   }
 
   /**
    * Crea un nuevo usuario manualmente (requiere privilegios de admin o editor).
    */
   public async createUsuario(data: CreateUsuarioDto): Promise<Usuario> {
-    return this.request<Usuario>('/api/usuarios', {
+    const res = await this.request<any>('/api/usuarios', {
       method: 'POST',
       body: data
     });
+    return this.unwrapData<Usuario>(res);
   }
 
   /**
    * Actualiza los datos de un usuario por ID.
    */
   public async updateUsuario(id: number, data: UpdateUsuarioDto): Promise<Usuario> {
-    return this.request<Usuario>(`/api/usuarios/${id}`, {
+    const res = await this.request<any>(`/api/usuarios/${id}`, {
       method: 'PUT',
       body: data
     });
+    return this.unwrapData<Usuario>(res);
   }
 
   /**
    * Actualiza únicamente el rol de un usuario.
    */
   public async updateUsuarioRol(id: number, rol: number): Promise<Usuario> {
-    return this.request<Usuario>(`/api/usuarios/${id}/rol`, {
+    const res = await this.request<any>(`/api/usuarios/${id}/rol`, {
       method: 'PATCH',
       body: { rol }
     });
+    return this.unwrapData<Usuario>(res);
   }
 
   /**
@@ -902,49 +1020,54 @@ export class ApiClient {
    * Consulta todos los roles registrados o filtra por nombre.
    */
   public async getRoles(filters?: RolFilters): Promise<Rol[]> {
-    return this.request<Rol[]>('/api/roles', {
+    const res = await this.request<any>('/api/roles', {
       method: 'GET',
       query: filters
     });
+    return this.unwrapData<Rol[]>(res);
   }
 
   /**
    * Obtiene la definición de un rol por su ID.
    */
   public async getRolById(id: number): Promise<Rol> {
-    return this.request<Rol>(`/api/roles/${id}`, {
+    const res = await this.request<any>(`/api/roles/${id}`, {
       method: 'GET'
     });
+    return this.unwrapData<Rol>(res);
   }
 
   /**
    * Crea un nuevo rol en la base de datos.
    */
   public async createRol(data: CreateRolDto): Promise<Rol> {
-    return this.request<Rol>('/api/roles', {
+    const res = await this.request<any>('/api/roles', {
       method: 'POST',
       body: data
     });
+    return this.unwrapData<Rol>(res);
   }
 
   /**
    * Actualiza un rol existente por ID.
    */
   public async updateRol(id: number, data: UpdateRolDto): Promise<Rol> {
-    return this.request<Rol>(`/api/roles/${id}`, {
+    const res = await this.request<any>(`/api/roles/${id}`, {
       method: 'PUT',
       body: data
     });
+    return this.unwrapData<Rol>(res);
   }
 
   /**
    * Añade una ruta o permiso a la lista de permisos de un rol.
    */
   public async addPermisoToRol(id: number, permiso: string): Promise<Rol> {
-    return this.request<Rol>(`/api/roles/${id}/permisos`, {
+    const res = await this.request<any>(`/api/roles/${id}/permisos`, {
       method: 'POST',
       body: { permiso }
     });
+    return this.unwrapData<Rol>(res);
   }
 
   /**
@@ -973,69 +1096,76 @@ export class ApiClient {
    * Lista todas las invitaciones generadas con filtros opcionales.
    */
   public async getInvitaciones(filters?: InvitacionFilters): Promise<Invitacion[]> {
-    return this.request<Invitacion[]>('/api/invitaciones', {
+    const res = await this.request<any>('/api/invitaciones', {
       method: 'GET',
       query: filters
     });
+    return this.unwrapData<Invitacion[]>(res);
   }
 
   /**
    * Obtiene una invitación por su ID primario.
    */
   public async getInvitacionById(id: number): Promise<Invitacion> {
-    return this.request<Invitacion>(`/api/invitaciones/${id}`, {
+    const res = await this.request<any>(`/api/invitaciones/${id}`, {
       method: 'GET'
     });
+    return this.unwrapData<Invitacion>(res);
   }
 
   /**
    * Valida y obtiene una invitación por su token único.
    */
   public async getInvitacionByToken(token: string): Promise<Invitacion> {
-    return this.request<Invitacion>(`/api/invitaciones/token/${encodeURIComponent(token)}`, {
+    const res = await this.request<any>(`/api/invitaciones/token/${encodeURIComponent(token)}`, {
       method: 'GET',
       skipAuth: true
     });
+    return this.unwrapData<Invitacion>(res);
   }
 
   /**
    * Crea una nueva invitación para un usuario especificando correo y rol.
    */
   public async createInvitacion(data: CreateInvitacionDto): Promise<Invitacion> {
-    return this.request<Invitacion>('/api/invitaciones', {
+    const res = await this.request<any>('/api/invitaciones', {
       method: 'POST',
       body: data
     });
+    return this.unwrapData<Invitacion>(res);
   }
 
   /**
    * Actualiza una invitación existente por ID.
    */
   public async updateInvitacion(id: number, data: UpdateInvitacionDto): Promise<Invitacion> {
-    return this.request<Invitacion>(`/api/invitaciones/${id}`, {
+    const res = await this.request<any>(`/api/invitaciones/${id}`, {
       method: 'PUT',
       body: data
     });
+    return this.unwrapData<Invitacion>(res);
   }
 
   /**
    * Modifica el rol asignado a una invitación existente.
    */
   public async updateInvitacionRol(id: number, rol: number): Promise<Invitacion> {
-    return this.request<Invitacion>(`/api/invitaciones/${id}/rol`, {
+    const res = await this.request<any>(`/api/invitaciones/${id}/rol`, {
       method: 'PATCH',
       body: { rol }
     });
+    return this.unwrapData<Invitacion>(res);
   }
 
   /**
    * Modifica el correo asociado a una invitación.
    */
   public async updateInvitacionCorreo(id: number, correo: string): Promise<Invitacion> {
-    return this.request<Invitacion>(`/api/invitaciones/${id}/correo`, {
+    const res = await this.request<any>(`/api/invitaciones/${id}/correo`, {
       method: 'PATCH',
       body: { correo }
     });
+    return this.unwrapData<Invitacion>(res);
   }
 
   /**
@@ -1055,39 +1185,77 @@ export class ApiClient {
    * Consulta los registros de repositorios con filtros opcionales.
    */
   public async getRepositorios(filters?: RepositorioFilters): Promise<Repositorio[]> {
-    return this.request<Repositorio[]>('/api/repositorios', {
+    const res = await this.request<any>('/api/repositorios', {
       method: 'GET',
       query: filters
     });
+    return this.unwrapData<Repositorio[]>(res);
   }
 
   /**
    * Obtiene los metadatos de un repositorio por ID.
    */
   public async getRepositorioById(id: number): Promise<Repositorio> {
-    return this.request<Repositorio>(`/api/repositorios/${id}`, {
+    const res = await this.request<any>(`/api/repositorios/${id}`, {
       method: 'GET'
     });
+    return this.unwrapData<Repositorio>(res);
   }
 
   /**
    * Registra un nuevo repositorio en la base de datos.
    */
   public async createRepositorio(data: CreateRepositorioDto): Promise<Repositorio> {
-    return this.request<Repositorio>('/api/repositorios', {
+    const res = await this.request<any>('/api/repositorios', {
       method: 'POST',
       body: data
     });
+    return this.unwrapData<Repositorio>(res);
+  }
+
+  /**
+   * Envía texto en bruto de un documento para que Gemini extraiga metadatos automáticamente,
+   * genere su embedding vectorial de 768 dimensiones y lo registre en repositorios.
+   */
+  public async procesarTextoDocumento(data: {
+    texto: string;
+    nom_arch?: string;
+    ruta_arch?: string;
+    driveFileId?: string;
+    categoria?: string;
+    contexto?: string;
+  }): Promise<Repositorio> {
+    const res = await this.request<any>('/api/repositorios/procesar-texto', {
+      method: 'POST',
+      body: data
+    });
+    return this.unwrapData<Repositorio>(res);
+  }
+
+  /**
+   * Realiza una búsqueda avanzada (semántica, híbrida o textual) en documentos del repositorio.
+   * Utiliza vectores embeddings de 768 dimensiones generados por Gemini AI y similitud de coseno en Neon DB.
+   * 
+   * @param params Término de búsqueda en texto, o configuración completa de búsqueda.
+   */
+  public async buscarRepositorios(params: string | BuscarRepositoriosParams): Promise<RepositorioSearchResult[]> {
+    const bodyParams = typeof params === 'string' ? { texto: params } : params;
+    const res = await this.request<any>('/api/repositorios/buscar', {
+      method: 'POST',
+      body: bodyParams
+    });
+    return this.unwrapData<RepositorioSearchResult[]>(res);
   }
 
   /**
    * Actualiza los metadatos de un repositorio existente por ID.
    */
   public async updateRepositorio(id: number, data: UpdateRepositorioDto): Promise<Repositorio> {
-    return this.request<Repositorio>(`/api/repositorios/${id}`, {
+    const res = await this.request<any>(`/api/repositorios/${id}`, {
       method: 'PUT',
       body: data
     });
+    return this.unwrapData<Repositorio>(res);
   }
 
   /**
@@ -1235,9 +1403,18 @@ export class ApiClient {
    * [INTERNO / PRIVADO] Solicita al backend el enlace prefirmado de Google Drive.
    */
   private async solicitarUrlSubidaInterna(data: DriveUploadUrlRequest): Promise<DriveUploadUrlResponse> {
+    const origin =
+      data.origin ||
+      (typeof window !== 'undefined' && window.location?.origin
+        ? window.location.origin
+        : undefined);
+
     return this.request<DriveUploadUrlResponse>('/api/repositorios/upload-url', {
       method: 'POST',
-      body: data
+      body: {
+        ...data,
+        ...(origin ? { origin } : {})
+      }
     });
   }
 
@@ -1291,7 +1468,13 @@ export class ApiClient {
         };
 
         xhr.onerror = () => {
-          reject(new ApiClientError('Error de red al subir archivo a Google Drive', 0, uploadUrl));
+          reject(
+            new ApiClientError(
+              'Error de red al subir archivo a Google Drive (bloqueo CORS o fallo de conexión). Verifica que el origen esté autorizado.',
+              0,
+              uploadUrl
+            )
+          );
         };
 
         xhr.send(file);
@@ -1336,61 +1519,67 @@ export class ApiClient {
    * Consulta las configuraciones del sistema con filtros opcionales.
    */
   public async getConfiguraciones(filters?: ConfiguracionFilters): Promise<Configuracion[]> {
-    return this.request<Configuracion[]>('/api/configuracion', {
+    const res = await this.request<any>('/api/configuracion', {
       method: 'GET',
       query: filters
     });
+    return this.unwrapData<Configuracion[]>(res);
   }
 
   /**
    * Obtiene un registro de configuración por su ID.
    */
   public async getConfiguracionById(id: number): Promise<Configuracion> {
-    return this.request<Configuracion>(`/api/configuracion/${id}`, {
+    const res = await this.request<any>(`/api/configuracion/${id}`, {
       method: 'GET'
     });
+    return this.unwrapData<Configuracion>(res);
   }
 
   /**
    * Crea una nueva configuración institucional.
    */
   public async createConfiguracion(data: CreateConfiguracionDto): Promise<Configuracion> {
-    return this.request<Configuracion>('/api/configuracion', {
+    const res = await this.request<any>('/api/configuracion', {
       method: 'POST',
       body: data
     });
+    return this.unwrapData<Configuracion>(res);
   }
 
   /**
    * Actualiza una configuración existente por ID.
    */
   public async updateConfiguracion(id: number, data: UpdateConfiguracionDto): Promise<Configuracion> {
-    return this.request<Configuracion>(`/api/configuracion/${id}`, {
+    const res = await this.request<any>(`/api/configuracion/${id}`, {
       method: 'PUT',
       body: data
     });
+    return this.unwrapData<Configuracion>(res);
   }
 
   /**
    * Añade una categoría al array de categorías de una configuración.
    */
   public async addCategoriaToConfig(id: number, categoria: string): Promise<Configuracion> {
-    return this.request<Configuracion>(`/api/configuracion/${id}/categorias`, {
+    const res = await this.request<any>(`/api/configuracion/${id}/categorias`, {
       method: 'POST',
       body: { categoria }
     });
+    return this.unwrapData<Configuracion>(res);
   }
 
   /**
    * Elimina una categoría del array de categorías de una configuración.
    */
   public async removeCategoriaFromConfig(id: number, categoria: string): Promise<Configuracion> {
-    return this.request<Configuracion>(
+    const res = await this.request<any>(
       `/api/configuracion/${id}/categorias/${encodeURIComponent(categoria)}`,
       {
         method: 'DELETE'
       }
     );
+    return this.unwrapData<Configuracion>(res);
   }
 
   /**
@@ -1403,6 +1592,68 @@ export class ApiClient {
   }
 
   // ==========================================================================
+  // 11.1. MÉTODOS DIRECTOS DE CATEGORÍAS (/api/categorias)
+  // ==========================================================================
+
+  /**
+   * Obtiene la lista completa de nombres de categorías (con filtro de búsqueda opcional).
+   */
+  public async getCategorias(search?: string): Promise<string[]> {
+    const res = await this.request<any>('/api/categorias', {
+      method: 'GET',
+      query: search ? { search } : undefined
+    });
+    return this.unwrapData<string[]>(res);
+  }
+
+  /**
+   * Obtiene el detalle de una categoría y cuántos documentos y comparativas la utilizan.
+   */
+  public async getCategoriaDetalle(nombre: string): Promise<CategoriaDetalle> {
+    const res = await this.request<any>(`/api/categorias/${encodeURIComponent(nombre)}`, {
+      method: 'GET'
+    });
+    return this.unwrapData<CategoriaDetalle>(res);
+  }
+
+  /**
+   * Registra una nueva categoría en el sistema.
+   */
+  public async createCategoria(nombre: string): Promise<{ nombre: string; todas: string[] }> {
+    const res = await this.request<any>('/api/categorias', {
+      method: 'POST',
+      body: { nombre }
+    });
+    return this.unwrapData<{ nombre: string; todas: string[] }>(res);
+  }
+
+  /**
+   * Renombra una categoría existente y sincroniza automáticamente las referencias en repositorios.
+   */
+  public async updateCategoria(
+    nombreActual: string,
+    nuevoNombre: string,
+    actualizarReferencias: boolean = true
+  ): Promise<CategoriaUpdateResult> {
+    const res = await this.request<any>(`/api/categorias/${encodeURIComponent(nombreActual)}`, {
+      method: 'PUT',
+      body: { nuevoNombre, actualizarReferencias }
+    });
+    return this.unwrapData<CategoriaUpdateResult>(res);
+  }
+
+  /**
+   * Elimina una categoría del sistema (opcionalmente reasignando documentos a otra).
+   */
+  public async deleteCategoria(nombre: string, reassignTo?: string): Promise<CategoriaDeleteResult> {
+    const res = await this.request<any>(`/api/categorias/${encodeURIComponent(nombre)}`, {
+      method: 'DELETE',
+      query: reassignTo ? { reassignTo } : undefined
+    });
+    return this.unwrapData<CategoriaDeleteResult>(res);
+  }
+
+  // ==========================================================================
   // 12. MÉTODOS DE COMPARATIVAS (/api/comparativas)
   // ==========================================================================
 
@@ -1410,59 +1661,65 @@ export class ApiClient {
    * Consulta comparativas registradas con filtros opcionales.
    */
   public async getComparativas(filters?: ComparativaFilters): Promise<Comparativa[]> {
-    return this.request<Comparativa[]>('/api/comparativas', {
+    const res = await this.request<any>('/api/comparativas', {
       method: 'GET',
       query: filters
     });
+    return this.unwrapData<Comparativa[]>(res);
   }
 
   /**
    * Obtiene una comparativa específica por ID.
    */
   public async getComparativaById(id: number): Promise<Comparativa> {
-    return this.request<Comparativa>(`/api/comparativas/${id}`, {
+    const res = await this.request<any>(`/api/comparativas/${id}`, {
       method: 'GET'
     });
+    return this.unwrapData<Comparativa>(res);
   }
 
   /**
    * Registra una nueva comparativa.
    */
   public async createComparativa(data: CreateComparativaDto): Promise<Comparativa> {
-    return this.request<Comparativa>('/api/comparativas', {
+    const res = await this.request<any>('/api/comparativas', {
       method: 'POST',
       body: data
     });
+    return this.unwrapData<Comparativa>(res);
   }
 
   /**
    * Actualiza una comparativa existente por ID.
    */
   public async updateComparativa(id: number, data: UpdateComparativaDto): Promise<Comparativa> {
-    return this.request<Comparativa>(`/api/comparativas/${id}`, {
+    const res = await this.request<any>(`/api/comparativas/${id}`, {
       method: 'PUT',
       body: data
     });
+    return this.unwrapData<Comparativa>(res);
   }
 
   /**
    * Añade una URL a la lista de URLs de una comparativa.
    */
   public async addUrlToComparativa(id: number, url: string): Promise<Comparativa> {
-    return this.request<Comparativa>(`/api/comparativas/${id}/urls`, {
+    const res = await this.request<any>(`/api/comparativas/${id}/urls`, {
       method: 'POST',
       body: { url }
     });
+    return this.unwrapData<Comparativa>(res);
   }
 
   /**
    * Remueve una URL de la lista de URLs de una comparativa.
    */
   public async removeUrlFromComparativa(id: number, url: string): Promise<Comparativa> {
-    return this.request<Comparativa>(`/api/comparativas/${id}/urls`, {
+    const res = await this.request<any>(`/api/comparativas/${id}/urls`, {
       method: 'DELETE',
       body: { url }
     });
+    return this.unwrapData<Comparativa>(res);
   }
 
   /**
@@ -1472,6 +1729,20 @@ export class ApiClient {
     return this.request<GenericSuccessResponse>(`/api/comparativas/${id}`, {
       method: 'DELETE'
     });
+  }
+
+  /**
+   * Realiza una búsqueda avanzada (semántica, híbrida o textual) en comparativas.
+   * 
+   * @param params Término de búsqueda en texto o configuración de búsqueda.
+   */
+  public async buscarComparativas(params: string | BuscarComparativasParams): Promise<ComparativaSearchResult[]> {
+    const bodyParams = typeof params === 'string' ? { texto: params } : params;
+    const res = await this.request<any>('/api/comparativas/buscar', {
+      method: 'POST',
+      body: bodyParams
+    });
+    return this.unwrapData<ComparativaSearchResult[]>(res);
   }
 
   // ==========================================================================
@@ -1582,16 +1853,35 @@ Eres un desarrollador Frontend experto encargado de integrar la interfaz de usua
   });
   \`\`\`
 
-## 4. Consumo de Modelos (CRUDs)
-- **Repositorios**: \`api.getRepositorios({ categoria, limit, offset })\`, \`api.updateRepositorio(id, data)\`, \`api.deleteRepositorio(id)\`.
+## 4. Consumo de Modelos (CRUDs y Búsquedas)
+- **Repositorios**: \`api.getRepositorios({ categoria, limit, offset })\`, \`api.procesarTextoDocumento({ texto, nom_arch })\`, \`api.buscarRepositorios({ texto: 'consulta', modo: 'hibrido' })\`, \`api.updateRepositorio(id, data)\`, \`api.deleteRepositorio(id)\`.
+- **Categorías**: \`api.getCategorias()\`, \`api.createCategoria('Nueva')\`, \`api.updateCategoria('Vieja', 'Nueva')\`, \`api.deleteCategoria('Nombre')\`.
 - **Usuarios**: \`api.getUsuarios()\`, \`api.createUsuario(data)\`, \`api.updateUsuarioRol(id, rolId)\`, \`api.deleteUsuario(id)\`.
 - **Roles**: \`api.getRoles()\`, \`api.syncRoles()\`.
 - **Invitaciones**: \`api.createInvitacion({ correo, rol })\`, \`api.getInvitaciones()\`, \`api.deleteInvitacion(id)\`.
-- **Configuraciones**: \`api.getConfiguraciones()\`, \`api.addCategoriaToConfig(id, 'Nueva')\`.
-- **Comparativas**: \`api.getComparativas()\`, \`api.createComparativa(data)\`.
+- **Configuraciones**: \`api.getConfiguraciones()\`, \`api.createConfiguracion(data)\`.
+- **Comparativas**: \`api.getComparativas()\`, \`api.buscarComparativas('consulta')\`, \`api.createComparativa(data)\`.
 - **Gemini AI**: \`const res = await api.askGemini({ prompt: 'Analiza este resumen: ...' })\`.
 
-## 5. Manejo de Errores
+## 5. Clases Modelo Orientadas a Objetos ('client/models')
+Puedes importar las clases directamente:
+\`\`\`ts
+import { Categoria, Repositorio, Comparativa } from './client';
+
+// Categorías
+const cats = await Categoria.fetchAll();
+const nueva = await Categoria.create('Legal');
+await nueva.rename('Área Legal y Regulatoria');
+await nueva.delete('General');
+
+// Repositorios y Búsqueda Semántica Vectorial
+const doc = await Repositorio.procesarTexto({ texto: 'Contenido...' });
+const docsSimilares = await Repositorio.buscar('ciberseguridad y auditoría');
+console.log(docsSimilares[0].similarity, docsSimilares[0].nom_arch);
+await doc.update({ descripcion: 'Nueva desc' });
+\`\`\`
+
+## 6. Manejo de Errores
 - Todas las peticiones fallidas lanzan \`ApiClientError\`.
 - Puedes capturarlo así:
   \`\`\`ts

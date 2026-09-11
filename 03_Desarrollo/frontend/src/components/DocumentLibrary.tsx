@@ -7,10 +7,14 @@ type DocumentLibraryProps = {
   documents: DocumentItem[];
   isRvdMode: boolean;
   selectedIds: string[];
+  canUpload?: boolean;
+  canRvd?: boolean;
+  canDeleteDocument?: boolean;
   onRvdToggle: () => void;
   onDocumentOpen: (document: DocumentItem) => void;
   onRvdClose: () => void;
   onUploadClick?: () => void;
+  onDeleteDocument?: (id: string) => void;
 };
 
 // Organiza el encabezado, filtros, modo RVD y listado de documentos.
@@ -19,10 +23,14 @@ export function DocumentLibrary({
   documents,
   isRvdMode,
   selectedIds,
+  canUpload = true,
+  canRvd = true,
+  canDeleteDocument = false,
   onRvdToggle,
   onDocumentOpen,
   onRvdClose,
   onUploadClick,
+  onDeleteDocument,
 }: DocumentLibraryProps) {
   return (
     <section className="content-area">
@@ -35,7 +43,8 @@ export function DocumentLibrary({
           <p>Mostrando {documents.length} documentos analizados recientemente</p>
         </div>
         <div className="heading-actions">
-          {onUploadClick && (
+          {/* Subir archivo: Oculto para Rol 3 (Usuario) */}
+          {canUpload && onUploadClick && (
             <button
               type="button"
               className="add-doc-top-button"
@@ -46,17 +55,23 @@ export function DocumentLibrary({
               <span>Añadir documento</span>
             </button>
           )}
-          <button
-            type="button"
-            className={isRvdMode ? "mode-button selected" : "mode-button"}
-            onClick={onRvdToggle}
-          >
-            <Files size={16} /> RVD
-            <span className="mode-label">Resumen múltiple</span>
-          </button>
+
+          {/* Modo RVD: Oculto para Rol 3 (Usuario) */}
+          {canRvd && (
+            <button
+              type="button"
+              className={isRvdMode ? "mode-button selected" : "mode-button"}
+              onClick={onRvdToggle}
+              title="Resumen inteligente múltiple"
+            >
+              <Files size={16} /> RVD
+              <span className="mode-label">Resumen múltiple</span>
+            </button>
+          )}
         </div>
       </div>
-      {isRvdMode && (
+
+      {isRvdMode && canRvd && (
         <div className="selection-banner">
           <div>
             <Sparkles size={17} />
@@ -74,22 +89,26 @@ export function DocumentLibrary({
           </button>
         </div>
       )}
+
       <div className="document-grid">
         {documents.map((document) => (
           <DocumentCard
             key={document.id}
             document={document}
             selected={selectedIds.includes(document.id)}
+            canDelete={canDeleteDocument}
             onOpen={() => onDocumentOpen(document)}
+            onDelete={onDeleteDocument}
           />
         ))}
       </div>
+
       {documents.length === 0 && (
         <div className="empty-state">
           <Search size={28} />
           <h2>No encontramos documentos</h2>
           <p>Prueba otra búsqueda o añade un nuevo archivo a esta categoría.</p>
-          {onUploadClick && (
+          {canUpload && onUploadClick && (
             <button
               type="button"
               className="primary-button"

@@ -655,7 +655,7 @@ await fetch(uploadUrl, {
     "systemInstruction": "Eres un asistente técnico senior y conciso.",
     "context": "El repositorio contiene 50 artículos de investigación sobre machine learning.",
     "temperature": 0.7,
-    "model": "gemini-2.5-flash"
+    "model": "gemini-3.6-flash"
   }
   ```
 * **Respuesta (`200 OK`):**
@@ -664,7 +664,7 @@ await fetch(uploadUrl, {
     "success": true,
     "data": {
       "response": "Te recomiendo utilizar una taxonomía basada en...",
-      "model": "gemini-2.5-flash",
+      "model": "gemini-3.6-flash",
       "usage": {
         "promptTokens": 35,
         "candidatesTokens": 120,

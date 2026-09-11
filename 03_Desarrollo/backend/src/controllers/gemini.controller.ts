@@ -71,11 +71,12 @@ export async function handleGeminiPrompt(req: Request, res: Response): Promise<v
 
 export async function getGeminiStatus(req: Request, res: Response): Promise<void> {
   const hasKey = Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY);
+  const defaultModel = process.env.GEMINI_DEFAULT_MODEL || 'gemini-3.6-flash';
 
   res.status(200).json({
     service: 'Google Gemini AI',
     configured: hasKey,
-    defaultModel: 'gemini-2.5-flash',
+    defaultModel,
     message: hasKey
       ? 'Gemini API configurada correctamente'
       : 'Falta configurar GEMINI_API_KEY en las variables de entorno (.env)'

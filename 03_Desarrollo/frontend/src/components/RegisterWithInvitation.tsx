@@ -1,6 +1,7 @@
 import {
   AlertCircle,
   ArrowLeft,
+  ArrowRight,
   CheckCircle2,
   Eye,
   EyeOff,
@@ -8,26 +9,48 @@ import {
   Loader2,
   Lock,
   Mail,
+  RotateCcw,
   ShieldCheck,
+  Ticket,
   User,
 } from "lucide-react";
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { api, ApiClientError } from "../services/api";
 
 interface RegisterWithInvitationProps {
-  token: string;
+  token?: string | null;
   onCancel: () => void;
   onSuccess: () => void;
 }
 
+function extractTokenValue(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.includes("token=")) {
+    try {
+      const url = new URL(trimmed.startsWith("http") ? trimmed : `https://dummy.local/${trimmed}`);
+      const t = url.searchParams.get("token");
+      if (t) return t.trim();
+    } catch {
+      const match = trimmed.match(/token=([a-zA-Z0-9_-]+)/);
+      if (match) return match[1];
+    }
+  }
+  return trimmed;
+}
+
 export const RegisterWithInvitation: React.FC<RegisterWithInvitationProps> = ({
-  token,
+  token: initialToken,
   onCancel,
   onSuccess,
 }) => {
   const { refreshUser } = useAuth();
-  const [isValidating, setIsValidating] = useState(true);
+
+  const [activeToken, setActiveToken] = useState<string | null>(() => {
+    return initialToken ? extractTokenValue(initialToken) : null;
+  });
+  const [tokenInputValue, setTokenInputValue] = useState("");
+  const [isValidating, setIsValidating] = useState(Boolean(initialToken));
   const [isTokenValid, setIsTokenValid] = useState(false);
   const [tokenError, setTokenError] = useState<string | null>(null);
 
@@ -43,51 +66,67 @@ export const RegisterWithInvitation: React.FC<RegisterWithInvitationProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  // Paso 1: Validar token al cargar el componente
-  useEffect(() => {
-    let active = true;
-
-    async function validate() {
-      setIsValidating(true);
-      setTokenError(null);
-
-      try {
-        const res = await api.validateInvitation(token);
-        if (active) {
-          if (res.valid && res.invitacion) {
-            setIsTokenValid(true);
-            setInvitationData(res.invitacion);
-          } else {
-            setIsTokenValid(false);
-            setTokenError(res.message || res.error || "El enlace de invitación no es válido o ya fue utilizado.");
-          }
-        }
-      } catch (err) {
-        if (active) {
-          setIsTokenValid(false);
-          if (err instanceof ApiClientError) {
-            setTokenError(err.message || "Invitación no encontrada o expirada.");
-          } else {
-            setTokenError("No se pudo comprobar la validez de la invitación.");
-          }
-        }
-      } finally {
-        if (active) {
-          setIsValidating(false);
-        }
-      }
+  // Función para validar un token contra el backend
+  const validateToken = useCallback(async (tokenToValidate: string) => {
+    const clean = extractTokenValue(tokenToValidate);
+    if (!clean) {
+      setTokenError("Por favor ingresa un código de invitación válido.");
+      return;
     }
 
-    validate();
-    return () => {
-      active = false;
-    };
-  }, [token]);
+    setIsValidating(true);
+    setTokenError(null);
 
-  // Paso 2: Registrar usuario
+    try {
+      const res = await api.validateInvitation(clean);
+      if (res.valid && res.invitacion) {
+        setIsTokenValid(true);
+        setInvitationData(res.invitacion);
+        setActiveToken(clean);
+      } else {
+        setIsTokenValid(false);
+        setTokenError(
+          res.message || res.error || "El enlace o código de invitación no es válido o ya fue utilizado."
+        );
+      }
+    } catch (err) {
+      setIsTokenValid(false);
+      if (err instanceof ApiClientError) {
+        setTokenError(err.message || "Invitación no encontrada o expirada en el sistema.");
+      } else {
+        setTokenError("No se pudo comprobar la validez de la invitación con el servidor.");
+      }
+    } finally {
+      setIsValidating(false);
+    }
+  }, []);
+
+  // Si se recibió un token por prop/URL inicial, validarlo automáticamente al montar
+  useEffect(() => {
+    if (initialToken) {
+      validateToken(initialToken);
+    }
+  }, [initialToken, validateToken]);
+
+  // Manejar envío manual del código de invitación
+  const handleManualTokenSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tokenInputValue.trim()) {
+      setTokenError("Ingresa tu código o enlace de invitación.");
+      return;
+    }
+    validateToken(tokenInputValue);
+  };
+
+  // Manejar registro final
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitError(null);
+
+    if (!activeToken) {
+      setSubmitError("Token de invitación ausente.");
+      return;
+    }
 
     if (!nombre.trim()) {
       setSubmitError("Por favor ingresa tu nombre completo.");
@@ -103,7 +142,7 @@ export const RegisterWithInvitation: React.FC<RegisterWithInvitationProps> = ({
 
     try {
       await api.register({
-        token,
+        token: activeToken,
         nombre: nombre.trim(),
         password,
       });
@@ -124,6 +163,14 @@ export const RegisterWithInvitation: React.FC<RegisterWithInvitationProps> = ({
     }
   };
 
+  const handleResetToken = () => {
+    setActiveToken(null);
+    setTokenInputValue("");
+    setIsTokenValid(false);
+    setTokenError(null);
+    setInvitationData(null);
+  };
+
   return (
     <div className="login-page-container">
       <div className="login-card">
@@ -135,7 +182,7 @@ export const RegisterWithInvitation: React.FC<RegisterWithInvitationProps> = ({
             </div>
             <div>
               <h1>DocuHub RVD</h1>
-              <p>Registro de Nuevo Colaborador por Invitación</p>
+              <p>Registro de Usuario en el Repositorio</p>
             </div>
           </div>
         </div>
@@ -144,25 +191,85 @@ export const RegisterWithInvitation: React.FC<RegisterWithInvitationProps> = ({
         {isValidating && (
           <div className="invitation-validating">
             <Loader2 size={32} className="spin" />
-            <p>Validando enlace de invitación en Neon DB...</p>
+            <p>Validando código de invitación en Neon DB...</p>
           </div>
         )}
 
-        {/* Estado 2: Token inválido */}
-        {!isValidating && !isTokenValid && (
+        {/* Estado 2: Error en el token */}
+        {!isValidating && !isTokenValid && tokenError && (
           <div className="invitation-error-card">
             <div className="invitation-error-icon">
               <AlertCircle size={36} />
             </div>
-            <h3>Enlace de invitación no disponible</h3>
+            <h3>Invitación no válida</h3>
             <p>{tokenError}</p>
-            <button type="button" className="login-submit-button" onClick={onCancel}>
-              <ArrowLeft size={16} /> Volver al Inicio de Sesión
-            </button>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <button
+                type="button"
+                className="login-submit-button"
+                onClick={handleResetToken}
+              >
+                <RotateCcw size={16} /> Intentar con otro código
+              </button>
+              <button
+                type="button"
+                className="back-to-login-btn"
+                onClick={onCancel}
+              >
+                <ArrowLeft size={14} /> Volver al Inicio de Sesión
+              </button>
+            </div>
           </div>
         )}
 
-        {/* Estado 3: Token válido - Formulario de registro */}
+        {/* Estado 3: Sin token activo y sin validar -> Pedir token/enlace */}
+        {!isValidating && !isTokenValid && !tokenError && (
+          <form onSubmit={handleManualTokenSubmit} className="login-form">
+            <div className="invitation-intro-box">
+              <KeyRound size={20} className="invitation-intro-icon" />
+              <div>
+                <strong>Invitación Requerida</strong>
+                <p>
+                  El registro requiere una invitación autorizada. Si recibiste un
+                  correo o enlace del Administrador, ingresa tu código aquí:
+                </p>
+              </div>
+            </div>
+
+            <div className="login-field-group">
+              <label htmlFor="reg-token-input">
+                <span>Código o Enlace de Invitación</span>
+              </label>
+              <div className="login-input-wrap">
+                <Ticket size={17} className="input-icon" />
+                <input
+                  id="reg-token-input"
+                  type="text"
+                  required
+                  placeholder="Pega tu código (ej: 3a9c...) o el enlace completo"
+                  value={tokenInputValue}
+                  onChange={(e) => setTokenInputValue(e.target.value)}
+                  autoFocus
+                />
+              </div>
+            </div>
+
+            <button type="submit" className="login-submit-button">
+              <ArrowRight size={17} />
+              <span>Validar Invitación y Continuar</span>
+            </button>
+
+            <button
+              type="button"
+              className="back-to-login-btn"
+              onClick={onCancel}
+            >
+              <ArrowLeft size={14} /> Volver al Inicio de Sesión
+            </button>
+          </form>
+        )}
+
+        {/* Estado 4: Token validado con éxito -> Formulario de Registro */}
         {!isValidating && isTokenValid && invitationData && (
           <form onSubmit={handleRegister} className="login-form">
             <div className="invitation-summary-box">
@@ -189,7 +296,7 @@ export const RegisterWithInvitation: React.FC<RegisterWithInvitationProps> = ({
             )}
 
             <div className="login-field-group">
-              <label>Correo Electrónico (Solo Lectura)</label>
+              <label>Correo Electrónico (Asignado)</label>
               <div className="login-input-wrap">
                 <Mail size={17} className="input-icon" />
                 <input

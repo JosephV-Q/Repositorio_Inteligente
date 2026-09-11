@@ -9,7 +9,7 @@ import {
   Lock,
   Mail,
   ShieldCheck,
-  Sparkles,
+  UserPlus,
 } from "lucide-react";
 import React, { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
@@ -17,9 +17,10 @@ import { api, ApiClientError } from "../services/api";
 
 interface AdminLoginProps {
   onSuccess?: () => void;
+  onRegister?: () => void;
 }
 
-export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess }) => {
+export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onRegister }) => {
   const { login, authError, clearAuthError } = useAuth();
 
   const [gmail, setGmail] = useState("admin@admin.com");
@@ -87,23 +88,10 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess }) => {
     setIsSubmitting(true);
 
     try {
-      const response = await login({
+      await login({
         gmail: cleanEmail,
         password,
       });
-
-      // Validar privilegios de administrador
-      const user = response.user;
-      const roleName = (user.nombre_rol || "").toLowerCase();
-      const isAdminRole = user.rol === 1 || roleName.includes("admin");
-
-      if (!isAdminRole) {
-        setLocalError(
-          `Acceso restringido: El usuario '${user.nombre}' tiene rol de '${user.nombre_rol || "Estándar"}'. Este portal requiere credenciales de Administrador.`,
-        );
-        setIsSubmitting(false);
-        return;
-      }
 
       if (onSuccess) {
         onSuccess();
@@ -139,10 +127,6 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess }) => {
           </div>
 
           <div className="login-badge-wrap">
-            <span className="login-admin-badge">
-              <Sparkles size={13} /> ACCESO ADMINISTRADOR
-            </span>
-
             <div
               className={`login-server-status status-${backendStatus}`}
               title={backendMessage}
@@ -239,11 +223,26 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess }) => {
             ) : (
               <>
                 <KeyRound size={17} />
-                <span>Iniciar Sesión como Administrador</span>
+                <span>Iniciar Sesión en el Sistema</span>
               </>
             )}
           </button>
         </form>
+
+        {/* Acceso a Registro */}
+        {onRegister && (
+          <div className="login-register-row">
+            <span>¿Tienes un enlace o código de invitación?</span>
+            <button
+              type="button"
+              className="login-register-btn"
+              onClick={onRegister}
+            >
+              <UserPlus size={15} />
+              <span>Registrarse</span>
+            </button>
+          </div>
+        )}
 
         {/* Acceso Rápido Demo / Pruebas */}
         <div className="login-quick-demo">
