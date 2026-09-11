@@ -42,7 +42,7 @@
 
 | ID | Riesgo | Categoría | Probabilidad | Impacto | Estrategia de mitigación |
 |---|---|---|---|---|---|
-| R-01 | Límites de uso o costo del servicio de IA externo (rate limits, cuota agotada) | Técnico | Media | Alto | Definir un modelo económico (ej. `gpt-4o-mini`/`text-embedding-3-small`), implementar manejo de errores con reintentos y mensajes claros al usuario; documentar el consumo estimado en Implementación. |
+| R-01 | Límites de uso o costo del servicio de IA externo (rate limits, cuota agotada) | Técnico | Media | Alto | Usar Google Gemini mediante `@google/genai`, centralizar los modelos en variables de entorno, validar el estado del servicio y mostrar errores claros; documentar el consumo estimado en Implementación. |
 | R-02 | Baja calidad de extracción de texto en PDFs escaneados o mal formateados | Técnico | Media | Medio | Delimitar el alcance a documentos con texto extraíble; documentar OCR como mejora futura si el tiempo lo permite (ver Diseño 06). |
 | R-03 | Curva de aprendizaje del equipo con conceptos de RAG/embeddings/bases vectoriales | Recursos/Equipo | Alta | Medio | Seleccionar una arquitectura simple (pgvector sobre PostgreSQL, sin infraestructura adicional) y documentar el flujo IA con claridad (Diseño 06) antes de programar. |
 | R-04 | Ampliación de alcance no planificada ("scope creep") por agregar funciones no exigidas | Alcance | Media | Medio | Ceñirse estrictamente al alcance de Análisis 01; toda funcionalidad adicional debe justificarse contra un RF existente. |

@@ -1,7 +1,7 @@
 # DISEÑO 03 — Modelo de Datos y Diccionario de Datos
 ## Sistema Inteligente de Gestión y Análisis Documental (SIGAD)
 
-*Modelo derivado directamente de las entidades identificadas en Análisis 02–04. Motor: PostgreSQL con extensión `pgvector` (justificación en Diseño 07).*
+*Modelo derivado directamente de las entidades identificadas en Análisis 02–04. Motor implementado: Neon PostgreSQL serverless con extensión `pgvector`, vectores de 768 dimensiones e índices HNSW. El modelo conceptual histórico se conserva como referencia; la sección 2.1 documenta el esquema realmente inicializado por `src/db/init.ts`.*
 
 ## 1. Modelo Entidad-Relación (conceptual)
 
@@ -88,13 +88,17 @@ erDiagram
 
 ## 2. Diccionario de datos técnico
 
-### Tabla `usuario`
+### 2.1 Esquema implementado
+
+Las tablas creadas automáticamente son `roles`, `usuarios`, `repositorios`, `configuracion`, `comparativas` e `invitaciones`. La tabla `repositorios` almacena `embedding vector(768)` y tiene índice HNSW con distancia coseno; `comparativas` también dispone de embedding e índice HNSW.
+
+### Tabla `usuario` (referencia conceptual)
 | Campo | Tipo | Restricciones | Descripción |
 |---|---|---|---|
 | id | UUID | PK | Identificador único |
 | nombre | VARCHAR(120) | NOT NULL | Nombre completo |
 | email | VARCHAR(160) | NOT NULL, UNIQUE | Usado como login |
-| password_hash | VARCHAR(255) | NOT NULL | Hash bcrypt (RNF-02) |
+| password_hash | VARCHAR(255) | NOT NULL | En la implementación corresponde a `usuarios.password`, que contiene hash HMAC-SHA256. |
 | rol | VARCHAR(30) | NOT NULL, CHECK IN ('administrador','usuario') | Rol del sistema (RF-02) |
 | activo | BOOLEAN | NOT NULL, DEFAULT true | Permite desactivar cuentas (CU-10) |
 

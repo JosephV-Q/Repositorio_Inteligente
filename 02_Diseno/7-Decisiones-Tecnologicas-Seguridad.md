@@ -1,6 +1,8 @@
 # DISEÑO 07 — Decisiones Tecnológicas y Diseño de Seguridad
 ## Sistema Inteligente de Gestión y Análisis Documental (SIGAD)
 
+> **Decisión vigente verificada (2026-09-10):** el backend implementado es Node.js + Express + TypeScript, la IA es Google Gemini, los archivos se almacenan en Google Drive y la autenticación usa tokens HMAC-SHA256. Las tablas históricas de este documento se conservan como registro de alternativas, pero la selección operativa vigente es la descrita en la sección 1.5.
+
 ## 1. Comparación y selección de tecnologías
 
 ### 1.1 Backend
@@ -8,7 +10,7 @@
 | Alternativa | Ventajas | Desventajas | Decisión |
 |---|---|---|---|
 | Node.js + Express | Mismo lenguaje que el frontend (JS/TS); buen soporte async | Ecosistema NLP/RAG/OCR menos maduro que Python | Descartada |
-| **Python + FastAPI** | Ecosistema robusto para NLP/IA (LangChain, pypdf, python-docx, pytesseract); tipado con Pydantic facilita validar los contratos de la API (Diseño 04); documentación OpenAPI automática | Lenguaje distinto al frontend (impacto menor: comunicación por API REST) | **Seleccionada** |
+| **Node.js + Express + TypeScript** | Mismo lenguaje que el frontend, asincronía nativa, módulos por dominio y despliegue directo en Vercel | Requiere delegar extracción local y análisis IA a servicios/librerías específicas | **Seleccionada vigente** |
 
 ### 1.2 Base de datos / almacenamiento vectorial
 
@@ -22,23 +24,23 @@
 | Alternativa | Ventajas | Desventajas | Decisión |
 |---|---|---|---|
 | Modelos open-source locales (ej. Llama + sentence-transformers) | Sin costo por uso, sin dependencia externa | Requiere infraestructura de cómputo (GPU) no garantizada en el ambiente académico; calidad en español más variable | Descartada para este alcance |
-| **API de OpenAI** (`gpt-4o-mini` + `text-embedding-3-small`) | Sin infraestructura propia; buena calidad en español; integración simple vía HTTPS; costo bajo con los modelos elegidos | Dependencia de un servicio externo (riesgo R-01, mitigado en Diseño 06) | **Seleccionada** |
+| **Google Gemini** (`gemini-3.6-flash` + `gemini-embedding-001`) | SDK oficial `@google/genai`, generación y embeddings integrados, sin infraestructura propia | Dependencia de cuota y disponibilidad externa | **Seleccionada vigente** |
 
 ### 1.4 Almacenamiento de archivos
 
 | Alternativa | Ventajas | Desventajas | Decisión |
 |---|---|---|---|
 | Object storage en la nube (S3/MinIO) | Escalable, desacoplado del servidor | Infraestructura y configuración adicional para un proyecto académico | Descartada para esta fase |
-| **Sistema de archivos local estructurado** (`/almacenamiento/{repositorio_id}/{documento_id}.{ext}`) | Simple, sin dependencias externas, suficiente para el volumen exigido | Menor escalabilidad horizontal | **Seleccionada**, con rutas diseñadas para migrar a object storage sin cambiar el modelo de datos (RNF-05) |
+| **Google Drive API v3** con sesión resumible | Almacenamiento externo, persistente y con subida directa cliente→Drive | Depende de credenciales, cuota y CORS de Google | **Seleccionada vigente** |
 
 ## 2. Diseño básico de seguridad
 
 | Aspecto | Diseño |
 |---|---|
-| Autenticación | JWT firmado con clave secreta (variable de entorno `JWT_SECRET`); expiración configurable (ej. 8 horas). |
-| Almacenamiento de contraseñas | Hash con `bcrypt` (nunca texto plano ni cifrado reversible). |
+| Autenticación | Token de sesión propio: payload codificado y firma HMAC-SHA256 con `HASH_SECRET`; se transporta como Bearer token. |
+| Almacenamiento de contraseñas | Hash HMAC-SHA256 con `HASH_SECRET` y comparación timing-safe; nunca se almacena texto plano. |
 | Autorización | Middleware que valida el rol del usuario contra la ruta solicitada (RF-02, RN-06); rutas de Administrador rechazan con 403 a otros roles. |
-| Gestión de credenciales externas | API key de OpenAI y credenciales de PostgreSQL únicamente en variables de entorno (`.env`), excluidas del control de versiones vía `.gitignore` (cumple condición académica de no publicar secretos). |
+| Gestión de credenciales externas | API key de Gemini, URL de Neon, credenciales OAuth2 de Drive y secretos de sesión únicamente en variables de entorno (`.env`), excluidas del control de versiones vía `.gitignore`. |
 | Validación de archivos | Verificación de extensión y tipo MIME real del archivo (no solo la extensión) antes de almacenarlo, para evitar carga de archivos disfrazados (RN-01). |
 | Límite de tamaño | Validación de tamaño en el propio endpoint antes de escribir a disco (RN-02). |
 | Transporte | HTTPS obligatorio en el entorno de despliegue (documentado en Implementación). |

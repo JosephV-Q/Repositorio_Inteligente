@@ -1,13 +1,13 @@
 # DISEÑO 04 — Diseño de API y Servicios
 ## Sistema Inteligente de Gestión y Análisis Documental (SIGAD)
 
-*API REST expuesta por el backend FastAPI (Diseño 01). Todas las rutas, salvo `/auth/login`, requieren cabecera `Authorization: Bearer <JWT>`. Formato de intercambio: JSON.*
+*API REST expuesta por Node.js + Express + TypeScript. Las rutas protegidas requieren `Authorization: Bearer <token_de_sesion>` (también se admite `x-session-token`). Formato de intercambio: JSON y prefijo `/api`.*
 
 ## 1. Autenticación
 
 | Método | Ruta | Descripción | RF |
 |---|---|---|---|
-| POST | `/auth/login` | Autentica usuario y devuelve JWT | RF-01 |
+| POST | `/api/auth/login` | Autentica usuario y devuelve token de sesión HMAC-SHA256 | RF-01 |
 | GET | `/auth/me` | Devuelve datos del usuario autenticado (incluye rol) | RF-02 |
 
 **POST /auth/login**

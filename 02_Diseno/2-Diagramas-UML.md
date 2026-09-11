@@ -1,7 +1,7 @@
 # DISEÑO 02 — Diagramas UML: Componentes, Despliegue y Secuencia
 ## Sistema Inteligente de Gestión y Análisis Documental (SIGAD)
 
-*El Diagrama de Casos de Uso ya se presentó en Análisis 04 (sección 1) para mantenerlo junto a sus especificaciones; no se repite aquí. Este documento cubre Componentes, Despliegue y Secuencias de los flujos críticos.*
+*El Diagrama de Casos de Uso ya se presentó en Análisis 04 (sección 1) para mantenerlo junto a sus especificaciones; no se repite aquí. Este documento cubre Componentes, Despliegue y Secuencias de los flujos críticos. Los diagramas se actualizan a la arquitectura implementada: Express, Neon, Gemini, Google Drive y Vercel.*
 
 ## 1. Diagrama de componentes
 
@@ -9,7 +9,7 @@
 graph TB
     FE[Frontend SPA]
 
-    subgraph API REST FastAPI
+    subgraph API REST Express + TypeScript
         AUTH[AuthModule]
         REPO[RepositoryModule]
         DOC[DocumentModule]
@@ -19,9 +19,9 @@ graph TB
         LOG[AuditModule]
     end
 
-    DB[(PostgreSQL + pgvector)]
-    FS[(Almacenamiento archivos)]
-    IA[OpenAI API]
+    DB[(Neon PostgreSQL + pgvector)]
+    DRIVE[(Google Drive API)]
+    IA[Google Gemini API]
 
     FE --> AUTH
     FE --> REPO
@@ -41,7 +41,7 @@ graph TB
     AUTH --> DB
     REPO --> DB
     DOC --> DB
-    DOC --> FS
+    DOC --> DRIVE
     DASH --> DB
 ```
 
@@ -61,32 +61,31 @@ graph TB
     subgraph Servidor de aplicación - Nodo único academico
         Nginx[Servidor web / reverse proxy]
         FE_static[Build estático React]
-        Backend[Proceso FastAPI - Uvicorn]
+        Backend[Express en Vercel Serverless]
     end
 
     subgraph Servidor de base de datos
-        Postgres[(PostgreSQL 15 + pgvector)]
+        Postgres[(Neon PostgreSQL + pgvector)]
     end
 
     subgraph Almacenamiento
-        Files[(Directorio de archivos por repositorio)]
+        Drive[(Google Drive)]
     end
 
     subgraph Nube externa
-        OpenAI_API[OpenAI API]
+        Gemini_API[Google Gemini API]
     end
 
-    Browser -->|HTTPS 443| Nginx
-    Nginx --> FE_static
-    Nginx -->|proxy /api| Backend
-    Backend -->|TCP 5432| Postgres
-    Backend -->|lectura/escritura| Files
-    Backend -->|HTTPS 443| OpenAI_API
+    Browser -->|HTTPS| FE_static
+    Browser -->|HTTPS /api| Backend
+    Backend -->|TLS| Postgres
+    Browser -->|PUT directo| Drive
+    Backend -->|HTTPS| Gemini_API
 ```
 
 **Notas de despliegue** (se detallan en el documento de Implementación):
-- Backend y Frontend pueden desplegarse en un único nodo para el alcance académico (contenedor o servidor único).
-- Las credenciales de PostgreSQL y la API key de OpenAI se inyectan por variables de entorno (`.env`), nunca hardcodeadas (RNF-02).
+- El backend se despliega como función serverless en Vercel y el frontend como build estático; no se requiere disco local persistente.
+- Las credenciales de Neon, Gemini y Google Drive se inyectan por variables de entorno, nunca hardcodeadas (RNF-02).
 
 ## 3. Diagramas de secuencia — flujos principales
 
@@ -98,33 +97,34 @@ sequenceDiagram
     participant FE as Frontend
     participant API as API (DocumentModule)
     participant PROC as ProcessingModule
-    participant FS as Almacenamiento
-    participant IA as OpenAI API
-    participant DB as PostgreSQL
+    participant DRIVE as Google Drive
+    participant IA as Google Gemini API
+    participant DB as Neon PostgreSQL
 
     Usuario->>FE: Selecciona archivo y repositorio
-    FE->>API: POST /documentos (archivo, repositorio_id)
-    API->>API: Validar formato (RN-01) y tamaño (RN-02)
+    FE->>API: POST /api/repositorios/upload-url (metadatos)
+    API->>DRIVE: Iniciar sesión resumible
+    DRIVE-->>API: uploadUrl
+    API-->>FE: URL de subida directa
+    FE->>DRIVE: PUT archivo binario
+    FE->>API: POST /api/repositorios (driveFileId, metadatos)
+    API->>API: Validar datos (RN-01) y tamaño (RN-02)
     alt archivo inválido
         API-->>FE: 400 Error de validación
     else archivo válido
-        API->>FS: Guardar archivo original
-        API->>DB: Crear registro (estado = "Cargado")
+        API->>DRIVE: Confirmar referencia del archivo
+        API->>DB: Crear registro y referencia Drive
         API-->>FE: 201 Documento creado
-        API->>PROC: procesar_documento(documento_id) [async]
-        PROC->>FS: Leer archivo
-        PROC->>PROC: Extraer texto según formato (RF-09)
+        API->>PROC: Analizar texto recibido
         PROC->>IA: Solicitar clasificación (RF-10)
         IA-->>PROC: Categoría
         PROC->>IA: Solicitar resumen (RF-11)
         IA-->>PROC: Resumen
         PROC->>IA: Solicitar extracción estructurada (RF-12)
         IA-->>PROC: Datos estructurados
-        PROC->>IA: Generar embeddings por fragmento
+        PROC->>IA: Generar embedding de 768 dimensiones
         IA-->>PROC: Vectores
-        PROC->>DB: Guardar resumen, categoría, datos, embeddings
-        PROC->>DB: Actualizar estado = "Procesado"
-        PROC->>DB: Registrar evento en bitácora (RF-17)
+        PROC->>DB: Guardar metadatos y embedding
     end
 ```
 
@@ -138,7 +138,7 @@ sequenceDiagram
     participant FE as Frontend
     participant API as API (SearchModule)
     participant DB as PostgreSQL (pgvector)
-    participant IA as OpenAI API
+    participant IA as Google Gemini API
 
     Usuario->>FE: Escribe pregunta sobre un repositorio
     FE->>API: POST /repositorios/{id}/preguntar {pregunta}

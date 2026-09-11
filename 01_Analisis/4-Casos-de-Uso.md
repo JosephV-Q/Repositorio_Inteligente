@@ -37,7 +37,7 @@ graph LR
 - **Flujo básico:**
   1. El usuario ingresa usuario y contraseña.
   2. El sistema valida las credenciales.
-  3. El sistema genera un token de sesión (JWT) y redirige al dashboard.
+  3. El sistema genera un token de sesión firmado HMAC-SHA256 y redirige al dashboard.
 - **Flujos alternativos:** credenciales inválidas → el sistema muestra error genérico (paso 2).
 - **Postcondiciones:** el usuario queda autenticado con los permisos de su rol.
 - **RF relacionados:** RF-01, RF-02.

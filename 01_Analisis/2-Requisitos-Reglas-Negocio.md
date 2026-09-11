@@ -35,7 +35,7 @@ Numeración estable — usada en Historias de Usuario, Casos de Uso, Trazabilida
 | ID | Categoría | Requisito |
 |---|---|---|
 | RNF-01 | Rendimiento | El procesamiento IA completo (extracción + clasificación + resumen) de un documento de hasta 10 páginas no debe superar 60 segundos. |
-| RNF-02 | Seguridad | La autenticación debe usar tokens JWT; las contraseñas deben almacenarse con hash (bcrypt); las credenciales del servicio de IA deben residir en variables de entorno, nunca en el repositorio de código. |
+| RNF-02 | Seguridad | La autenticación debe usar tokens de sesión firmados HMAC-SHA256; las contraseñas deben almacenarse mediante hash HMAC-SHA256 con secreto externo; las credenciales de IA, base de datos y almacenamiento deben residir en variables de entorno, nunca en el repositorio de código. |
 | RNF-03 | Usabilidad | Las funciones principales (cargar documento, buscar, consultar en lenguaje natural) deben ser alcanzables en máximo 3 clics desde el dashboard. |
 | RNF-04 | Disponibilidad | El sistema debe permanecer operativo durante las sesiones de demostración y sustentación; no se exige alta disponibilidad de nivel empresarial. |
 | RNF-05 | Mantenibilidad | El código debe organizarse por capas/módulos independientes y documentarse (ver Desarrollo). |

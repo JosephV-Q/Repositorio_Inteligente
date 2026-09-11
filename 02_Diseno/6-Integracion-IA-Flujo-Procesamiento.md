@@ -1,7 +1,7 @@
 # DISEÑO 06 — Diseño de la Integración con IA y Flujo de Procesamiento Documental
 ## Sistema Inteligente de Gestión y Análisis Documental (SIGAD)
 
-*Este documento responde directamente al requisito central del proyecto: demostrar el flujo real archivo → extracción → procesamiento IA → análisis → almacenamiento → búsqueda/consulta → respuesta (no un CRUD con un botón "IA").*
+*Este documento responde directamente al requisito central del proyecto: demostrar el flujo real archivo → extracción → procesamiento IA → análisis → almacenamiento → búsqueda/consulta → respuesta (no un CRUD con un botón "IA"). La implementación vigente usa Google Gemini; el código actual recibe texto y metadatos para el análisis, y genera embeddings de 768 dimensiones en Neon.*
 
 ## 1. Técnica seleccionada: RAG (Retrieval-Augmented Generation)
 
@@ -17,14 +17,14 @@
 
 | Etapa | Técnica/herramienta | Justificación |
 |---|---|---|
-| Extracción de texto | `pypdf`/`pdfplumber` (PDF), `python-docx` (DOCX), lectura directa (TXT) | Librerías estándar, sin costo, suficientes para documentos con texto extraíble (ver limitación en sección 5). |
+| Extracción de texto | Extractores del frontend (`pdfjs-dist`, `mammoth`) y texto directo para TXT | El cliente prepara el contenido y el backend recibe el texto para su análisis. |
 | División en fragmentos (chunking) | Fragmentos de ~500–800 tokens con solapamiento de ~100 tokens | Balance entre contexto suficiente para el LLM y precisión de la búsqueda semántica. |
-| Embeddings | `text-embedding-3-small` (OpenAI) | Buen desempeño en español, costo bajo, dimensión manejable (1536) para `pgvector`. |
+| Embeddings | `gemini-embedding-001` mediante `@google/genai`, salida de 768 dimensiones | Coincide con `vector(768)` e índice HNSW de Neon. |
 | Almacenamiento vectorial | `pgvector` sobre PostgreSQL (tabla `fragmento`, Diseño 03) | Un solo motor de datos (ver Diseño 07). |
-| Clasificación | Prompt estructurado a `gpt-4o-mini` con las categorías predefinidas | Modelo económico, suficiente para clasificación de texto con categorías cerradas. |
-| Resumen | Prompt de resumen a `gpt-4o-mini` sobre el texto completo extraído | Mismo modelo que clasificación, evita costos de dos proveedores distintos. |
-| Extracción estructurada | Prompt con *function calling* / salida JSON forzada a `gpt-4o-mini`, esquema específico por tipo de documento | Garantiza una salida parseable y validable antes de guardarla en `extraccion_estructurada.datos`. |
-| Generación de respuesta (RAG) | `gpt-4o-mini` con los fragmentos recuperados como contexto exclusivo | Cumple RN-08: la respuesta no debe basarse en conocimiento externo del modelo. |
+| Clasificación | `gemini-3.6-flash` (o modelo configurado) con categorías disponibles | El backend centraliza la selección y remapea modelos obsoletos conocidos. |
+| Resumen | Prompt de resumen a Gemini sobre el texto recibido | Se conserva la salida en los metadatos del repositorio. |
+| Extracción estructurada | Prompt de análisis a Gemini con salida JSON esperada (`nom_arch`, `categoria`, `descripcion`, `resumen`, `palabras_clave`, `contexto`) | Mantiene metadatos estructurados en el registro de `repositorios`; la validación final depende del controlador y del módulo de persistencia. |
+| Generación de respuesta | Gemini mediante `/api/gemini`, con contexto documental enviado por el cliente o servicio | El contexto debe limitarse al repositorio consultado para cumplir RN-08. |
 
 ## 3. Tres tipos de documento con extracción estructurada (cumplimiento de RF-12)
 
