@@ -18,15 +18,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { categories as defaultCategories } from "../data/documents";
 import { api, ApiClientError } from "../services/api";
+import type { Repositorio } from "../../client/ApiClient";
 import type { DocumentItem } from "../types/document";
 import { extractDocument, type UnifiedExtractionResult } from "../tools";
-import { chunkDocument } from "../tools/textChunker";
 
 interface UploadModalProps {
   isOpen: boolean;
   onClose: () => void;
   onUpload: (newDocument: DocumentItem) => void;
   currentCategory?: string;
+  categories?: string[];
 }
 
 const ACCEPTED_FORMATS = [".pdf", ".docx", ".txt"];
@@ -46,6 +47,7 @@ export function UploadModal({
   onClose,
   onUpload,
   currentCategory = "Proyectos Activos",
+  categories = defaultCategories,
 }: UploadModalProps) {
   const { user } = useAuth();
 
@@ -62,14 +64,17 @@ export function UploadModal({
 
   // Estados de metadatos básicos
   const [title, setTitle] = useState("");
-  const [availableCategories, setAvailableCategories] = useState<string[]>(defaultCategories);
+  const [availableCategories, setAvailableCategories] = useState<string[]>(() =>
+    Array.from(new Set([...(categories || []), ...defaultCategories]))
+  );
   const [category, setCategory] = useState(
     currentCategory && currentCategory !== "Todas las categorías"
       ? currentCategory
-      : defaultCategories[0] || "Proyectos Activos"
+      : (categories && categories.length > 0 ? categories[0] : defaultCategories[0]) || "Proyectos Activos"
   );
   const [isCustomCategory, setIsCustomCategory] = useState(false);
   const [customCategoryName, setCustomCategoryName] = useState("");
+  const [isAiClassified, setIsAiClassified] = useState(false);
   const [description, setDescription] = useState("");
   const [author, setAuthor] = useState(user?.nombre || "Administrador");
 
@@ -97,6 +102,7 @@ export function UploadModal({
   const [totalBytes, setTotalBytes] = useState(0);
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [existingDocNotice, setExistingDocNotice] = useState<string | null>(null);
 
   // Estado de subida completada con éxito
   const [uploadedDoc, setUploadedDoc] = useState<DocumentItem | null>(null);
@@ -145,6 +151,13 @@ export function UploadModal({
     };
   }, [isOpen]);
 
+  // Sincronizar categorías cuando cambie la prop categories
+  useEffect(() => {
+    if (categories && categories.length > 0) {
+      setAvailableCategories((prev) => Array.from(new Set([...prev, ...categories])));
+    }
+  }, [categories]);
+
   // Resetear campos del formulario
   const resetForm = useCallback(() => {
     setSelectedFile(null);
@@ -157,10 +170,11 @@ export function UploadModal({
     const initialCategory =
       currentCategory && currentCategory !== "Todas las categorías"
         ? currentCategory
-        : defaultCategories[0] || "Proyectos Activos";
+        : (categories && categories.length > 0 ? categories[0] : defaultCategories[0]) || "Proyectos Activos";
     setCategory(initialCategory);
     setIsCustomCategory(false);
     setCustomCategoryName("");
+    setIsAiClassified(false);
     setDescription("");
     setKeywords([]);
     setTagInput("");
@@ -176,11 +190,12 @@ export function UploadModal({
     setLoadedBytes(0);
     setTotalBytes(0);
     setStatusMessage("");
+    setExistingDocNotice(null);
     setUploadedDoc(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
-  }, [currentCategory]);
+  }, [currentCategory, categories]);
 
   const handleClose = useCallback(() => {
     if (isUploading) return;
@@ -208,6 +223,82 @@ export function UploadModal({
     return "TXT";
   };
 
+  // Heurística de clasificación semántica para asociar contenido con categorías disponibles
+  const classifyDocumentByContent = (
+    fileName: string,
+    text: string,
+    categoriesPool: string[]
+  ): string => {
+    const combined = `${fileName} ${text}`.toLowerCase();
+
+    const categoryRules: Array<{ category: string; terms: string[] }> = [
+      {
+        category: "Finanzas & Legal",
+        terms: [
+          "finanz", "financier", "balance", "contab", "presupuesto", "factura", "auditor",
+          "contrato", "legal", "jurídic", "juridic", "cláusula", "clausula", "fiscal",
+          "tributar", "gasto", "ingreso", "arancel", "soc2", "capital", "usd", "precio", "pago", "deuda"
+        ],
+      },
+      {
+        category: "Recursos Humanos",
+        terms: [
+          "recursos humanos", "rrhh", "personal", "emplead", "nómina", "nomina", "contratación",
+          "contratacion", "talento", "vacante", "desempeño", "desempeno", "capacitación", "capacitacion",
+          "laboral", "currículum", "curriculum", "salario", "sueldo", "beneficios", "colaborador"
+        ],
+      },
+      {
+        category: "Informes Técnicos",
+        terms: [
+          "técnic", "tecnic", "informe", "reporte", "especificación", "especificacion", "manual",
+          "arquitectura", "servidor", "microservicio", "api", "infraestructura", "despliegue",
+          "código", "codigo", "sistema", "ingeniería", "ingenieria", "redes", "base de datos",
+          "latencia", "cluster", "clúster", "logs", "openapi"
+        ],
+      },
+      {
+        category: "Investigación + I+D",
+        terms: [
+          "investig", "i+d", "científic", "cientific", "estudio", "metodología", "metodologia",
+          "hipótesis", "hipotesis", "experimento", "análisis estadístico", "publicación", "publicacion",
+          "desarrollo tecnológico", "innovación", "innovacion", "tesis", "paper", "patente"
+        ],
+      },
+      {
+        category: "Proyectos Activos",
+        terms: [
+          "proyecto", "hito", "cronograma", "entregable", "sprint", "roadmap", "plan estratégico",
+          "plan estrategico", "plan de trabajo", "avance", "fase", "gestión de proyecto", "gestion de proyecto",
+          "requerimiento", "kpi"
+        ],
+      },
+    ];
+
+    let bestCat = categoriesPool.find((c) => c !== "Todas las categorías") || "Proyectos Activos";
+    let maxScore = 0;
+
+    for (const rule of categoryRules) {
+      const matchingAvailable = categoriesPool.find(
+        (c) => c.toLowerCase() === rule.category.toLowerCase()
+      );
+      if (!matchingAvailable) continue;
+
+      let score = 0;
+      for (const term of rule.terms) {
+        if (combined.includes(term)) {
+          score += term.length > 5 ? 2 : 1;
+        }
+      }
+      if (score > maxScore) {
+        maxScore = score;
+        bestCat = matchingAvailable;
+      }
+    }
+
+    return bestCat;
+  };
+
   const generateSmartSummary = (
     fileName: string,
     fileFormat: "PDF" | "DOCX" | "TXT",
@@ -215,26 +306,34 @@ export function UploadModal({
     docCategory: string,
     rawText: string,
   ): string[] => {
-    if (rawText && rawText.trim().length > 0) {
-      const cleanLines = rawText
-        .split(/[\r\n]+/)
-        .map((l) => l.trim())
-        .filter((l) => l.length > 20);
+    const titleClean = docTitle || fileName;
 
-      if (cleanLines.length >= 3) {
-        return cleanLines.slice(0, 3);
+    if (rawText && rawText.trim().length > 50) {
+      // Extraer párrafos sustanciales y coherentes del propio texto extraído/escaneado
+      const paragraphs = rawText
+        .split(/\n\s*\n+/)
+        .map((p) => p.replace(/\s+/g, " ").trim())
+        .filter((p) => p.length >= 60 && !p.startsWith("--- Página"));
+
+      if (paragraphs.length >= 3) {
+        return [
+          `**Contexto y Objeto:** ${paragraphs[0]}`,
+          `**Puntos Clave y Desarrollo:** ${paragraphs[Math.floor(paragraphs.length / 2)]}`,
+          `**Conclusiones y Cierre:** ${paragraphs[paragraphs.length - 1]}`,
+        ];
+      } else if (paragraphs.length > 0) {
+        return paragraphs.slice(0, 4).map((p, idx) => `**Punto clave ${idx + 1}:** ${p}`);
       }
     }
 
-    const titleClean = docTitle || fileName;
     return [
-      `Análisis estructural completado para ${titleClean}: formato ${fileFormat} indexado y validado en la categoría '${docCategory}'.`,
-      `Extracción semántica automática de entidades clave, referencias operativas y tablas de datos verificadas con 99.1% de confianza.`,
-      `Documento integrado exitosamente en el clúster RVD para consultas transversales y generación de informes ejecutivos.`,
+      `**Contexto del Archivo:** Documento "${titleClean}" en formato ${fileFormat}, clasificado en la categoría "${docCategory}".`,
+      `**Estado de Extracción:** El archivo no contiene capa de texto digital legible o el escaneo fue realizado como imagen pura sin OCR incrustado.`,
+      `**Recomendación:** Puedes pegar o ingresar el texto escaneado en el panel de texto extraído para generar un análisis completo y detallado con Gemini AI.`,
     ];
   };
 
-  // Función central para generar resumen inteligente con Gemini AI a partir del contenido extraído
+  // Función central para clasificar y generar resumen inteligente con Gemini AI a partir del contenido extraído
   const generateSummaryWithAI = async (
     file: File,
     docTitle: string,
@@ -247,48 +346,73 @@ export function UploadModal({
     const activeCat = isCustomCategory ? customCategoryName.trim() || docCategory : docCategory;
     const format = getFormatType(file.name);
 
+    // Listado de categorías activas para orientar la clasificación de la IA
+    const categoriesForPrompt = availableCategories
+      .filter((c) => c !== "Todas las categorías")
+      .map((c) => `"${c}"`)
+      .join(", ");
+
     try {
-      // Preparar fragmentos estratégicos del documento para no sobrecargar el prompt
+      // Preparar el texto completo o una muestra generosa (hasta 80,000 caracteres) cubriendo inicio, mitad y fin
       let textSnippet = "";
       if (rawText && rawText.trim().length > 0) {
-        const chunks = chunkDocument(rawText, { chunkSize: 1500, chunkOverlap: 150 });
-        if (chunks.length <= 3) {
-          textSnippet = chunks.map((c) => c.text).join("\n\n");
+        const trimmed = rawText.trim();
+        if (trimmed.length <= 80000) {
+          textSnippet = trimmed;
         } else {
-          // Tomar inicio, sección intermedia y conclusiones
-          const firstChunk = chunks[0]?.text || "";
-          const midChunk = chunks[Math.floor(chunks.length / 2)]?.text || "";
-          const lastChunk = chunks[chunks.length - 1]?.text || "";
-          textSnippet = `[SECCIÓN INICIAL]:\n${firstChunk}\n\n[SECCIÓN INTERMEDIA]:\n${midChunk}\n\n[SECCIÓN FINAL / CONCLUSIONES]:\n${lastChunk}`;
+          const start = trimmed.slice(0, 40000);
+          const midPos = Math.floor(trimmed.length / 2) - 12000;
+          const middle = trimmed.slice(midPos, midPos + 24000);
+          const end = trimmed.slice(-16000);
+          textSnippet = `[SECCIÓN INICIAL]:\n${start}\n\n[SECCIÓN INTERMEDIA]:\n${middle}\n\n[SECCIÓN FINAL Y CONCLUSIONES]:\n${end}`;
         }
       }
 
-      const prompt = `Analiza este documento y su contenido extraído. Responde ÚNICAMENTE con un objeto JSON válido con la siguiente estructura:
+      const prompt = `Analiza minuciosamente el contenido del siguiente documento y genera su clasificación temática automática y una síntesis exhaustiva y estructurada.
+
+REQUISITOS FUNDAMENTALES:
+1. CLASIFICACIÓN TEMÁTICA OBLIGATORIA:
+   Debes clasificar el documento seleccionando EXACTAMENTE una de las siguientes categorías disponibles en el sistema:
+   [ ${categoriesForPrompt} ]
+   - "Finanzas & Legal": Balances, presupuestos, estados contables, contratos, auditorías legales o normativas, acuerdos contractuales, cláusulas jurídicas, impuestos o costos.
+   - "Recursos Humanos": Nóminas, perfiles laborales, contrataciones de personal, talento humano, capacitaciones, evaluaciones de desempeño o políticas internas de empleados.
+   - "Informes Técnicos": Diseños de sistemas, manuales de software, APIs, microservicios, infraestructura de servidores, seguridad informática, despliegues, logs técnicos o reportes de desarrollo.
+   - "Investigación + I+D": Proyectos científicos, estudios experimentales, metodologías, investigación académica, patentes, tesis o papers.
+   - "Proyectos Activos": Hitos de proyectos, planes de trabajo operativos, cronogramas, roadmaps, requerimientos funcionales o actas de seguimiento.
+   - Si ninguna de las categorías anteriores se ajusta de manera razonable al contenido, sugiere una categoría breve, formal y precisa.
+
+2. CONTEXTO Y PROPÓSITO: Especifica claramente qué tipo de documento es, quién lo emite, a quién va dirigido, fechas/períodos relevantes y el objetivo o problemática central.
+3. PUNTOS CLAVE: Detalla los aspectos más importantes, antecedentes, diagnósticos o temas desarrollados en el cuerpo del texto.
+4. CIFRAS, OBLIGACIONES Y ACUERDOS: Resalta cifras numéricas, montos, plazos, artículos o compromisos clave si existen en el documento.
+5. CONCLUSIONES Y PRÓXIMOS PASOS: Explica el dictamen final, resoluciones o acuerdos concluyentes.
+6. PROFUNDIDAD: El campo "resumen" DEBE ser una lista de 4 a 6 puntos sustanciales. Cada punto debe ser un párrafo informativo bien redactado (2 a 4 oraciones) que empiece con un título en negrita (ej: "**Contexto y Objeto:** ...", "**Diagnóstico y Puntos Clave:** ...", "**Acuerdos y Cifras Relevantes:** ...", "**Conclusiones:** ..."). NO uses frases cortas, vacías o repetitivas.
+
+Responde ÚNICAMENTE con un objeto JSON válido con la siguiente estructura:
 {
+  "categoria": "Nombre exacto de una de las categorías disponibles en el sistema (ej. Finanzas & Legal, Recursos Humanos, Informes Técnicos, etc.)",
   "resumen": [
-    "Punto clave 1 sintetizado y detallado",
-    "Punto clave 2 sintetizado y detallado",
-    "Punto clave 3 sintetizado y detallado",
-    "Punto clave 4 sintetizado y detallado"
+    "**Contexto y Objeto:** [Explicación detallada del origen, emisor y propósito]",
+    "**Puntos Clave y Desarrollo:** [Temas nodales y antecedentes abordados]",
+    "**Acuerdos, Cifras y Obligaciones:** [Cifras, plazos o resoluciones específicas]",
+    "**Conclusiones y Cierre:** [Conclusiones finales y dictámenes]"
   ],
-  "palabras_clave": ["etiqueta1", "etiqueta2", "etiqueta3", "etiqueta4"],
-  "descripcion": "Descripción ejecutiva concisa del contenido del documento (1 a 2 líneas)",
-  "contexto": "Contexto operativo o institucional sugerido"
+  "palabras_clave": ["etiqueta1", "etiqueta2", "etiqueta3", "etiqueta4", "etiqueta5"],
+  "descripcion": "Descripción ejecutiva concisa del contenido del documento (2 a 3 oraciones completas)",
+  "contexto": "Ámbito operativo, institucional o legal específico (ej. Auditoría Contable 2025, Contratación de Personal)"
 }
 
 DATOS DEL DOCUMENTO:
 - Nombre de archivo: "${file.name}"
 - Título: "${docTitle || file.name}"
 - Formato: "${format}"
-- Categoría: "${activeCat}"
-${textSnippet ? `\nCONTENIDO EXTRAÍDO DEL DOCUMENTO:\n"""\n${textSnippet.slice(0, 5000)}\n"""` : ""}`;
+${textSnippet ? `\nCONTENIDO TEXTUAL COMPLETO DEL DOCUMENTO:\n"""\n${textSnippet}\n"""` : "\n(Nota: No se detectó texto digital seleccionable en el documento. Si es un archivo escaneado, indícalo claramente en el contexto y resumen)."}`;
 
       const res = await api.askGemini({
         prompt,
         systemInstruction:
-          "Eres un analista experto en extracción semántica, síntesis y gestión documental para el sistema DocuHub RVD. Genera resúmenes ejecutivos precisos y de alto valor basados estrictamente en el contenido provisto.",
+          "Eres un especialista senior en análisis documental, extracción semántica y catalogación de alta precisión. Proporciona clasificación temática certera según las categorías existentes y resúmenes ejecutivos profundos, contextualmente ricos y estructurados, basados fielmente en los datos fácticos del texto.",
         temperature: 0.2,
-        maxOutputTokens: 1024,
+        maxOutputTokens: 2048,
       });
 
       if (res.success && res.data?.response) {
@@ -303,8 +427,49 @@ ${textSnippet ? `\nCONTENIDO EXTRAÍDO DEL DOCUMENTO:\n"""\n${textSnippet.slice(
         }
 
         if (parsed) {
+          // 1. Clasificación automática y selección de categoría en el formulario
+          let appliedCategory = activeCat;
+          if (parsed.categoria && typeof parsed.categoria === "string" && parsed.categoria.trim()) {
+            const rawSuggested = parsed.categoria.trim();
+            const match = availableCategories.find(
+              (c) => c.trim().toLowerCase() === rawSuggested.toLowerCase()
+            );
+
+            if (match) {
+              appliedCategory = match;
+              setCategory(match);
+              setIsCustomCategory(false);
+              setIsAiClassified(true);
+            } else {
+              setAvailableCategories((prev) => {
+                if (!prev.some((c) => c.toLowerCase() === rawSuggested.toLowerCase())) {
+                  return [...prev, rawSuggested];
+                }
+                return prev;
+              });
+              appliedCategory = rawSuggested;
+              setCategory(rawSuggested);
+              setIsCustomCategory(false);
+              setIsAiClassified(true);
+            }
+          }
+
+          // 2. Resumen ejecutivo estructurado
+          let summaryArray: string[] = [];
           if (Array.isArray(parsed.resumen) && parsed.resumen.length > 0) {
-            setSummaryText(parsed.resumen.join("\n"));
+            summaryArray = parsed.resumen.map((r: any) => String(r).trim()).filter(Boolean);
+          } else if (typeof parsed.resumen === "string" && parsed.resumen.trim().length > 0) {
+            summaryArray = parsed.resumen
+              .split(/\n\s*[-*•]?\s*|\n\n+/)
+              .map((s: string) => s.trim().replace(/^[-*•]\s*/, ""))
+              .filter((s: string) => s.length > 15);
+            if (summaryArray.length === 0) {
+              summaryArray = [parsed.resumen.trim()];
+            }
+          }
+
+          if (summaryArray.length > 0) {
+            setSummaryText(summaryArray.join("\n"));
           }
           if (Array.isArray(parsed.palabras_clave) && parsed.palabras_clave.length > 0) {
             setKeywords((prev) =>
@@ -312,53 +477,69 @@ ${textSnippet ? `\nCONTENIDO EXTRAÍDO DEL DOCUMENTO:\n"""\n${textSnippet.slice(
                 new Set([
                   ...prev,
                   ...parsed.palabras_clave.map((k: string) => String(k).toLowerCase()),
+                  appliedCategory.toLowerCase(),
                 ])
               )
             );
           }
-          if (parsed.descripcion && typeof parsed.descripcion === "string") {
-            setDescription(parsed.descripcion);
+          if (parsed.descripcion && typeof parsed.descripcion === "string" && parsed.descripcion.trim()) {
+            setDescription(parsed.descripcion.trim());
           }
-          if (parsed.contexto && typeof parsed.contexto === "string") {
-            setContexto(parsed.contexto);
+          if (parsed.contexto && typeof parsed.contexto === "string" && parsed.contexto.trim()) {
+            setContexto(parsed.contexto.trim());
           }
           return;
         } else {
           setSummaryText(res.data.response.trim());
+          const fallbackCat = classifyDocumentByContent(
+            file.name,
+            rawText || res.data.response,
+            availableCategories
+          );
+          setCategory(fallbackCat);
+          setIsCustomCategory(false);
+          setIsAiClassified(true);
           return;
         }
       }
 
       // Fallback si la respuesta de Gemini no es exitosa
+      const fallbackCat = classifyDocumentByContent(
+        file.name,
+        rawText || docTitle,
+        availableCategories
+      );
+      setCategory(fallbackCat);
+      setIsCustomCategory(false);
+      setIsAiClassified(true);
+
       const fallbackSummary = generateSmartSummary(
         file.name,
         format,
         docTitle,
-        activeCat,
+        fallbackCat,
         rawText
       );
       setSummaryText(fallbackSummary.join("\n"));
     } catch (aiErr) {
       console.warn("[UploadModal] Gemini AI no respondió, aplicando resumen estructurado:", aiErr);
+      const fallbackCat = classifyDocumentByContent(
+        file.name,
+        rawText || docTitle,
+        availableCategories
+      );
+      setCategory(fallbackCat);
+      setIsCustomCategory(false);
+      setIsAiClassified(true);
+
       const fallbackSummary = generateSmartSummary(
         file.name,
         format,
         docTitle,
-        activeCat,
+        fallbackCat,
         rawText
       );
       setSummaryText(fallbackSummary.join("\n"));
-      setKeywords((prev) =>
-        Array.from(
-          new Set([
-            ...prev,
-            activeCat.toLowerCase(),
-            format.toLowerCase(),
-            "rvd",
-            "docuhub",
-          ])
-        )
-      );
     } finally {
       setIsAiGenerating(false);
     }
@@ -398,6 +579,25 @@ ${textSnippet ? `\nCONTENIDO EXTRAÍDO DEL DOCUMENTO:\n"""\n${textSnippet.slice(
     if (!contexto) {
       setContexto(`Ingesta institucional ${category}`);
     }
+
+    // Comprobar si el archivo ya existe en la base de datos para notificar al usuario
+    setExistingDocNotice(null);
+    api.getRepositorios({ nom_arch: baseName })
+      .then((existing) => {
+        if (Array.isArray(existing) && existing.length > 0) {
+          const match = existing.find(
+            (r) =>
+              r.nom_arch.trim().toLowerCase() === baseName.toLowerCase() ||
+              r.nom_arch.trim().toLowerCase() === file.name.toLowerCase()
+          );
+          if (match) {
+            setExistingDocNotice(
+              `Aviso: Este archivo ya existe en el repositorio (ID #${match.id}). Al confirmar la subida se actualizarán sus datos y análisis sin duplicar el registro.`
+            );
+          }
+        }
+      })
+      .catch(() => {});
 
     // 1. Extraer contenido antes de subir usando src/tools (client-side)
     const extractionPromise = (async () => {
@@ -490,8 +690,10 @@ ${textSnippet ? `\nCONTENIDO EXTRAÍDO DEL DOCUMENTO:\n"""\n${textSnippet.slice(
     setShowExtractedPreview(false);
     extractionPromiseRef.current = null;
     aiSummaryPromiseRef.current = null;
+    setIsAiClassified(false);
     setKeywords([]);
     setSummaryText("");
+    setExistingDocNotice(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -607,13 +809,17 @@ ${textSnippet ? `\nCONTENIDO EXTRAÍDO DEL DOCUMENTO:\n"""\n${textSnippet.slice(
             currentExtractedText,
           );
 
-    setStatusMessage("Solicitando URL prefirmada a Google Drive...");
-    setUploadProgress(15);
+    const fileNameToUpload = title.trim() || selectedFile.name;
 
     try {
-      // Subida directa a Google Drive y registro en Neon DB mediante `api.subirArchivo`
-      const result = await api.subirArchivo(selectedFile, {
-        nom_arch: title.trim() || selectedFile.name,
+      // -----------------------------------------------------------------------
+      // PASO 1: Subir el archivo al servidor mediante api.subirArchivo(file, params?)
+      // -----------------------------------------------------------------------
+      setStatusMessage("Paso 1/4: Subiendo archivo al servidor (Google Drive)...");
+      setUploadProgress(15);
+
+      const uploadResult = await api.subirArchivo(selectedFile, {
+        nom_arch: fileNameToUpload,
         categoria: finalCategory,
         descripcion:
           description.trim() ||
@@ -627,36 +833,134 @@ ${textSnippet ? `\nCONTENIDO EXTRAÍDO DEL DOCUMENTO:\n"""\n${textSnippet.slice(
         folderId: folderId.trim() || undefined,
         soloDrive,
         onProgress: (percent, loaded, total) => {
-          setUploadProgress(Math.max(10, Math.min(95, percent)));
+          setUploadProgress(Math.max(10, Math.min(50, Math.round(percent * 0.5))));
           setLoadedBytes(loaded);
           setTotalBytes(total);
-          setStatusMessage(`Transmitiendo bytes a Google Drive (${percent}%)...`);
+          setStatusMessage(`Transmitiendo archivo a Google Drive (${percent}%)...`);
         },
       });
 
-      setUploadProgress(100);
-      setStatusMessage("¡Archivo subido a Google Drive y registrado con éxito!");
+      // -----------------------------------------------------------------------
+      // PASO 2: Obtener el enlace del mismo archivo usando api.getRepositorios(filtros?)
+      // -----------------------------------------------------------------------
+      setStatusMessage("Paso 2/4: Obteniendo enlace del repositorio desde la base de datos...");
+      setUploadProgress(60);
 
-      const repoId = result.repositorio?.id
-        ? `REPO-${result.repositorio.id}`
+      let remoteUrl = uploadResult.viewUrl || "";
+      let remoteRepoId = uploadResult.repositorio?.id;
+
+      try {
+        const repos = await api.getRepositorios({
+          nom_arch: fileNameToUpload,
+          categoria: finalCategory,
+        });
+        const matchingRepo = Array.isArray(repos)
+          ? (repos.find(
+              (r) =>
+                r.nom_arch === fileNameToUpload ||
+                (remoteRepoId && r.id === remoteRepoId)
+            ) || repos[0])
+          : null;
+
+        if (matchingRepo?.ruta_arch) {
+          remoteUrl = matchingRepo.ruta_arch;
+        }
+        if (matchingRepo?.id) {
+          remoteRepoId = matchingRepo.id;
+        }
+      } catch (repoErr) {
+        console.warn("[UploadModal] Aviso al consultar getRepositorios:", repoErr);
+      }
+
+      // -----------------------------------------------------------------------
+      // PASO 3: Extraer texto del archivo en memoria del navegador usando src/tools
+      // -----------------------------------------------------------------------
+      setStatusMessage("Paso 3/4: Extrayendo texto en memoria del navegador con src/tools...");
+      setUploadProgress(75);
+
+      let textToProcess = currentExtractedText || fileTextContent;
+      if (!textToProcess || textToProcess.trim().length === 0) {
+        try {
+          const extraction = await extractDocument(selectedFile, {
+            onPageProgress: (current, total) => {
+              setStatusMessage(`Extrayendo texto: página ${current} de ${total}...`);
+            },
+          });
+          if (extraction.success && extraction.text) {
+            textToProcess = extraction.text;
+            setFileTextContent(extraction.text);
+            setExtractionResult(extraction);
+          }
+        } catch (extractErr) {
+          console.warn("[UploadModal] Error en extracción client-side con src/tools:", extractErr);
+        }
+      }
+
+      // -----------------------------------------------------------------------
+      // PASO 4: Usar api.procesarTextoDocumento({ texto, ... }) para generar el repositorio
+      // -----------------------------------------------------------------------
+      setStatusMessage("Paso 4/4: Generando repositorio y metadatos vectoriales con IA...");
+      setUploadProgress(90);
+
+      let finalRepo: Repositorio | undefined = uploadResult.repositorio;
+
+      if (textToProcess && textToProcess.trim().length > 0) {
+        try {
+          const processedRepo = await api.procesarTextoDocumento({
+            texto: textToProcess,
+            nom_arch: fileNameToUpload,
+            ruta_arch: remoteUrl || uploadResult.viewUrl || `https://drive.google.com/file/d/${uploadResult.driveFileId}/view`,
+            driveFileId: uploadResult.driveFileId,
+            categoria: finalCategory,
+            contexto: contexto.trim() || undefined,
+            resumen: finalSummary.join("\n"),
+            descripcion: description.trim() || undefined,
+            palabras_clave: keywords.length > 0 ? keywords : undefined,
+          });
+
+          if (processedRepo) {
+            finalRepo = processedRepo;
+            if (processedRepo.id) {
+              remoteRepoId = processedRepo.id;
+            }
+            if (processedRepo.ruta_arch) {
+              remoteUrl = processedRepo.ruta_arch;
+            }
+          }
+        } catch (processErr: any) {
+          console.warn("[UploadModal] Aviso en procesarTextoDocumento:", processErr);
+        }
+      }
+
+      setUploadProgress(100);
+      setStatusMessage("¡Archivo subido, extraído e indexado exitosamente!");
+
+      const numericRepoId = finalRepo?.id ?? (remoteRepoId ? Number(remoteRepoId) : undefined);
+      const repoId = numericRepoId
+        ? `REPO-${numericRepoId}`
         : `DOC-${Date.now().toString().slice(-4)}`;
 
       const newDoc: DocumentItem = {
         id: repoId,
-        title: title.trim() || selectedFile.name,
-        category: finalCategory,
+        repoId: numericRepoId,
+        title: finalRepo?.nom_arch || fileNameToUpload,
+        category: finalRepo?.categoria || finalCategory,
         description:
+          finalRepo?.descripcion ||
           description.trim() ||
           `Documento procesado e indexado en la categoría ${finalCategory}.`,
         format,
         author: author.trim() || user?.nombre || "Administrador",
-        summary: finalSummary,
-        driveFileId: result.driveFileId,
-        viewUrl: result.viewUrl,
-        palabras_clave: keywords,
-        contexto: contexto.trim() || undefined,
+        summary: finalRepo?.resumen
+          ? finalRepo.resumen.split("\n").map((l) => l.trim()).filter((l) => l.length > 0)
+          : finalSummary,
+        driveFileId: uploadResult.driveFileId,
+        viewUrl: remoteUrl || finalRepo?.ruta_arch || uploadResult.viewUrl,
+        palabras_clave: finalRepo?.palabras_clave || keywords,
+        contexto: finalRepo?.contexto || contexto.trim() || undefined,
       };
 
+      setIsUploading(false);
       setUploadedDoc(newDoc);
       onUpload(newDoc);
     } catch (err: any) {
@@ -849,6 +1153,13 @@ ${textSnippet ? `\nCONTENIDO EXTRAÍDO DEL DOCUMENTO:\n"""\n${textSnippet.slice(
               </div>
             )}
 
+            {existingDocNotice && (
+              <div style={{ marginTop: "10px", padding: "8px 12px", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "8px", color: "#166534", fontSize: "11px", display: "flex", gap: "6px", alignItems: "center" }}>
+                <Check size={14} style={{ color: "#16a34a", flexShrink: 0 }} />
+                <span>{existingDocNotice}</span>
+              </div>
+            )}
+
             {/* Indicador de Extracción Client-Side (src/tools) */}
             {selectedFile && (
               <div className="extraction-container">
@@ -891,32 +1202,36 @@ ${textSnippet ? `\nCONTENIDO EXTRAÍDO DEL DOCUMENTO:\n"""\n${textSnippet.slice(
                         </small>
                       )}
                     </div>
-                    {fileTextContent && (
-                      <button
-                        type="button"
-                        className="preview-extracted-btn"
-                        onClick={() => setShowExtractedPreview(!showExtractedPreview)}
-                        title="Ver el contenido de texto extraído"
-                      >
-                        {showExtractedPreview ? "Ocultar texto" : "Ver texto extraído"}
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      className="preview-extracted-btn"
+                      onClick={() => setShowExtractedPreview(!showExtractedPreview)}
+                      title="Ver o editar el texto del documento para el análisis de IA"
+                    >
+                      {showExtractedPreview
+                        ? "Ocultar texto"
+                        : (fileTextContent ? "Ver / Editar texto extraído" : "✏️ Pegar texto escaneado")}
+                    </button>
                   </div>
                 ) : null}
 
-                {showExtractedPreview && fileTextContent && (
+                {showExtractedPreview && (
                   <div className="extracted-text-preview">
-                    <div className="extracted-preview-header">
+                    <div className="extracted-preview-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <small>
-                        Contenido extraído del archivo ({fileTextContent.length.toLocaleString()} caracteres totales):
+                        Texto para análisis de IA ({fileTextContent.length.toLocaleString()} caracteres):
+                      </small>
+                      <small style={{ color: "#778ca3" }}>
+                        (Puedes editarlo o pegar texto escaneado de OCR)
                       </small>
                     </div>
-                    <pre className="extracted-preview-content">
-                      {fileTextContent.slice(0, 2500)}
-                      {fileTextContent.length > 2500
-                        ? "\n\n[... contenido restante truncado para vista previa ...]"
-                        : ""}
-                    </pre>
+                    <textarea
+                      className="extracted-preview-content"
+                      style={{ width: "100%", minHeight: "120px", resize: "vertical", fontFamily: "monospace", fontSize: "11px", padding: "8px", border: "1px solid #dbe4ed", borderRadius: "6px" }}
+                      value={fileTextContent}
+                      onChange={(e) => setFileTextContent(e.target.value)}
+                      placeholder="Pega aquí el texto escaneado del documento si no se detectó automáticamente..."
+                    />
                   </div>
                 )}
               </div>
@@ -952,11 +1267,33 @@ ${textSnippet ? `\nCONTENIDO EXTRAÍDO DEL DOCUMENTO:\n"""\n${textSnippet.slice(
                 {/* Categoría y Autor */}
                 <div className="form-row-2">
                   <div className="form-group">
-                    <label htmlFor="doc-category">Categoría</label>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                      <label htmlFor="doc-category" style={{ margin: 0 }}>Categoría</label>
+                      {isAiClassified && (
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "4px",
+                            fontSize: "11px",
+                            color: "#1d4ed8",
+                            background: "#eff6ff",
+                            border: "1px solid #bfdbfe",
+                            padding: "2px 7px",
+                            borderRadius: "10px",
+                            fontWeight: 600,
+                          }}
+                          title="Categoría clasificada automáticamente por Gemini AI según el contenido del documento"
+                        >
+                          <Sparkles size={11} style={{ color: "#2563eb" }} /> Auto-clasificado por IA
+                        </span>
+                      )}
+                    </div>
                     <select
                       id="doc-category"
                       value={isCustomCategory ? "__custom__" : category}
                       onChange={(e) => {
+                        setIsAiClassified(false);
                         if (e.target.value === "__custom__") {
                           setIsCustomCategory(true);
                         } else {
@@ -980,7 +1317,10 @@ ${textSnippet ? `\nCONTENIDO EXTRAÍDO DEL DOCUMENTO:\n"""\n${textSnippet.slice(
                         className="custom-category-input"
                         placeholder="Escribe el nombre de la categoría..."
                         value={customCategoryName}
-                        onChange={(e) => setCustomCategoryName(e.target.value)}
+                        onChange={(e) => {
+                          setIsAiClassified(false);
+                          setCustomCategoryName(e.target.value);
+                        }}
                         disabled={isUploading}
                         autoFocus
                       />
@@ -1076,10 +1416,10 @@ ${textSnippet ? `\nCONTENIDO EXTRAÍDO DEL DOCUMENTO:\n"""\n${textSnippet.slice(
                   </div>
                   <textarea
                     id="doc-summary"
-                    rows={3}
+                    rows={7}
                     value={summaryText}
                     onChange={(e) => setSummaryText(e.target.value)}
-                    placeholder="Puntos clave del documento..."
+                    placeholder="Puntos clave y resumen ejecutivo estructurado..."
                     disabled={isUploading}
                   />
                 </div>

@@ -36,7 +36,7 @@ export function DocumentDetail({
         <div className="detail-content">
           <div className="detail-toolbar">
             <span className="category-pill">
-              <span /> {document.category} / Finanzas
+              <span /> {document.category}
             </span>
             <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
               <button
@@ -78,32 +78,79 @@ export function DocumentDetail({
               )}
             </div>
           </div>
+
+          {document.contexto && (
+            <div style={{ marginTop: "12px", padding: "8px 12px", background: "#f0f6fc", borderRadius: "8px", border: "1px solid #d8e5f3", fontSize: "11px", color: "#234262" }}>
+              <strong>Ámbito / Contexto:</strong> {document.contexto}
+            </div>
+          )}
+
+          {document.description && (
+            <p style={{ marginTop: "10px", marginBottom: "6px", fontSize: "11.5px", color: "#50657b", lineHeight: "1.5" }}>
+              {document.description}
+            </p>
+          )}
+
           <div className="summary-heading">
             <div>
               <h3>
-                <Sparkles size={16} /> Resumen Inteligente
+                <Sparkles size={16} /> Resumen Inteligente y Puntos Clave
                 <small>Generado por DocuHub AI</small>
               </h3>
-              <p>Precisión estimada: <strong>98.4%</strong></p>
+              <p>Puntos extraídos: <strong>{document.summary.length}</strong></p>
             </div>
           </div>
+
           <div className="summary-list">
-            {document.summary.map((item, index) => (
-              <article className="summary-item" key={item}>
-                <span className="summary-number">
-                  {String(index + 1).padStart(2, "0")}
-                </span>
-                <p>{item}</p>
-                <button type="button" className="page-link">
-                  Ir a pág. {index === 0
-                    ? "4-12 (Presupuestos)"
-                    : index === 1
-                      ? "22 (Cronograma)"
-                      : "31-33 (Legal)"}
-                </button>
-              </article>
-            ))}
+            {document.summary.map((item, index) => {
+              const match = item.match(/^\*\*(.*?)\*\*:?\s*([\s\S]*)$/);
+              return (
+                <article className="summary-item" key={`${item}-${index}`}>
+                  <span className="summary-number">
+                    {String(index + 1).padStart(2, "0")}
+                  </span>
+                  <div style={{ flex: 1, padding: "2px 0" }}>
+                    {match ? (
+                      <>
+                        <strong style={{ display: "block", color: "#16385a", fontSize: "11px", marginBottom: "3px" }}>
+                          {match[1]}
+                        </strong>
+                        <p style={{ margin: 0, color: "#455a71", fontSize: "10.5px", lineHeight: "1.5" }}>
+                          {match[2]}
+                        </p>
+                      </>
+                    ) : (
+                      <p style={{ margin: 0, color: "#455a71", fontSize: "10.5px", lineHeight: "1.5" }}>
+                        {item}
+                      </p>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
           </div>
+
+          {document.palabras_clave && document.palabras_clave.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "14px", alignItems: "center" }}>
+              <span style={{ fontSize: "10px", color: "#8b9eb3", fontWeight: 600 }}>Etiquetas:</span>
+              {document.palabras_clave.map((tag) => (
+                <span
+                  key={tag}
+                  style={{
+                    background: "#f1f5f9",
+                    color: "#475569",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: "12px",
+                    padding: "2px 8px",
+                    fontSize: "9px",
+                    fontWeight: 600,
+                  }}
+                >
+                  #{tag}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
         <footer className="detail-footer">
           <span><UserRound size={14} /> Por: {document.author}</span>

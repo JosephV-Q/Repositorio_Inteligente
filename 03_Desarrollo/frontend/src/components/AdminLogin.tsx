@@ -1,6 +1,5 @@
 import {
   AlertCircle,
-  CheckCircle2,
   Database,
   Eye,
   EyeOff,
@@ -23,8 +22,8 @@ interface AdminLoginProps {
 export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onRegister }) => {
   const { login, authError, clearAuthError } = useAuth();
 
-  const [gmail, setGmail] = useState("admin@admin.com");
-  const [password, setPassword] = useState("admin123456");
+  const [gmail, setGmail] = useState("");
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -61,13 +60,6 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onRegister })
       active = false;
     };
   }, []);
-
-  const handleFillDemo = () => {
-    setGmail("admin@admin.com");
-    setPassword("admin123456");
-    setLocalError(null);
-    clearAuthError();
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -243,29 +235,6 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onRegister })
             </button>
           </div>
         )}
-
-        {/* Acceso Rápido Demo / Pruebas */}
-        <div className="login-quick-demo">
-          <div className="demo-header">
-            <span>Credenciales de Arranque (Preconfiguradas):</span>
-          </div>
-          <div className="demo-credentials-box">
-            <div className="demo-row">
-              <small>Usuario:</small> <code>admin@admin.com</code>
-            </div>
-            <div className="demo-row">
-              <small>Contraseña:</small> <code>admin123456</code>
-            </div>
-            <button
-              type="button"
-              className="demo-fill-btn"
-              onClick={handleFillDemo}
-              disabled={isSubmitting}
-            >
-              <CheckCircle2 size={13} /> Autocompletar datos de admin
-            </button>
-          </div>
-        </div>
 
         {/* Pie de Seguridad */}
         <div className="login-security-footer">

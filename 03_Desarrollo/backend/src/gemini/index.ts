@@ -260,10 +260,11 @@ export async function analyzeDocumentText(
     apiKey?: string;
   } = {}
 ): Promise<DocumentAnalysisResult> {
+  const defaultModel = process.env.GEMINI_DEFAULT_MODEL || 'gemini-3.6-flash';
   const {
     availableCategories = [],
     originalFileName,
-    model = 'gemini-flash-latest',
+    model = defaultModel,
     apiKey
   } = options;
 
@@ -271,52 +272,92 @@ export async function analyzeDocumentText(
     ? `Categorías predefinidas disponibles en el sistema:\n${availableCategories.map((c) => `- "${c}"`).join('\n')}\nSi el contenido se ajusta a alguna de estas, selecciona la categoría exacta. Si no, sugiere una categoría breve y coherente.`
     : 'Identifica una categoría temática general coherente.';
 
-  const systemInstruction = `Eres un asistente de catalogación y análisis de documentos.
-Tu tarea es analizar el texto suministrado y extraer sus metadatos principales.
+  const systemInstruction = `Eres un especialista senior en análisis, catalogación y síntesis documental de alta precisión para un sistema de gestión documental inteligente.
+Tu misión es analizar a fondo el texto del documento y generar una síntesis exhaustiva, rigurosa y de alto valor ejecutivo que refleje con total fidelidad el contenido, contexto y decisiones del texto.
+
+CRITERIOS OBLIGATORIOS PARA EL RESUMEN:
+1. CONTEXTUALIZACIÓN Y PROPÓSITO: Identifica claramente de qué tipo de documento se trata, qué entidad, autor o partes lo suscriben, la fecha o período de aplicación, y el objetivo central o problema que atiende.
+2. PUNTOS CLAVE Y DESARROLLO TEMÁTICO: Sintetiza los temas nodales, antecedentes relevantes, discusiones o consideraciones técnicas/administrativas tratadas en el texto.
+3. DATOS, CIFRAS, ACUERDOS Y COMPROMISOS: Extrae cifras específicas, montos económicos, plazos, artículos normativos, responsabilidades asignadas o resoluciones vinculantes.
+4. CONCLUSIONES Y PRÓXIMOS PASOS: Explica el desenlace, dictamen final, recomendaciones o acciones de seguimiento establecidas.
+5. FORMATO DE SALIDA DEL RESUMEN:
+   - Debe ser una lista de 4 a 7 puntos clave sustanciales. Cada punto debe ser un párrafo desarrollado (2 a 4 oraciones informativas), NO frases cortas ni genéricas.
+   - Cada punto debe comenzar con una etiqueta temática en negrita (ej: "**Contexto y Objeto:** ...", "**Diagnóstico y Antecedentes:** ...", "**Acuerdos y Cifras Clave:** ...", "**Conclusiones y Dictamen:** ...").
+   - Prohibido utilizar frases genéricas de relleno como "el documento habla de varios puntos" o "se realizó un análisis estructural". Cada afirmación debe basarse en hechos del texto.
+
 Debes responder ÚNICAMENTE con un objeto JSON estrictamente válido (sin bloques de código markdown, sin explicaciones antes o después) con la siguiente estructura:
 {
   "nom_arch": "nombre_sugerido_del_archivo.pdf",
   "categoria": "Categoría asignada",
-  "descripcion": "Descripción breve y concisa del contenido (máximo 3 oraciones)",
-  "resumen": "Resumen ejecutivo detallado y estructurado de las ideas, hechos y conclusiones principales del documento",
-  "palabras_clave": ["etiqueta1", "etiqueta2", "etiqueta3", "etiqueta4", "etiqueta5"],
-  "contexto": "Ámbito o contexto institucional/temático del texto"
+  "descripcion": "Descripción ejecutiva concisa del contenido del documento (2 a 3 oraciones)",
+  "resumen": [
+    "**Contexto y Objeto:** [Explicación detallada de origen, partes y propósito]",
+    "**Diagnóstico y Puntos Clave:** [Temas principales y antecedentes]",
+    "**Acuerdos, Cifras y Compromisos:** [Datos cuantificables, obligaciones o cláusulas]",
+    "**Conclusiones y Próximos Pasos:** [Resoluciones finales y decisiones]"
+  ],
+  "palabras_clave": ["etiqueta1", "etiqueta2", "etiqueta3", "etiqueta4", "etiqueta5", "etiqueta6"],
+  "contexto": "Ámbito institucional, legal o temático específico del texto"
 }
 
 ${categoriesContext}`;
 
+  // Enviar una ventana generosa de texto (hasta 90,000 caracteres) cubriendo inicio, desarrollo y final
+  let textSample = rawText.trim();
+  if (textSample.length > 90000) {
+    const start = textSample.slice(0, 45000);
+    const midPos = Math.floor(textSample.length / 2) - 15000;
+    const middle = textSample.slice(midPos, midPos + 25000);
+    const end = textSample.slice(-20000);
+    textSample = `[SECCIÓN INICIAL]:\n${start}\n\n[SECCIÓN INTERMEDIA]:\n${middle}\n\n[SECCIÓN FINAL Y CONCLUSIONES]:\n${end}`;
+  }
+
   const prompt = originalFileName
-    ? `Nombre original del documento: "${originalFileName}"\n\nTexto del documento:\n${rawText.slice(0, 30000)}`
-    : `Texto del documento:\n${rawText.slice(0, 30000)}`;
+    ? `Nombre original del documento: "${originalFileName}"\n\nTexto del documento:\n${textSample}`
+    : `Texto del documento:\n${textSample}`;
 
   let response = await askGemini({
     model,
     systemInstruction,
     prompt,
     temperature: 0.2,
+    maxOutputTokens: 2048,
     apiKey
   });
 
-  // Si el modelo principal está ocupado (503) o falla, reintentar con modelo alternativo
+  // Si el modelo principal falla, reintentar con modelo alternativo de alta capacidad
   if (!response.success) {
-    const fallbackModel = model === 'gemini-flash-latest' ? 'gemini-3.8-flash' : 'gemini-flash-latest';
+    const fallbackModel = model === 'gemini-3.8-flash' ? 'gemini-3.6-flash' : 'gemini-3.8-flash';
     response = await askGemini({
       model: fallbackModel,
       systemInstruction,
       prompt,
       temperature: 0.2,
+      maxOutputTokens: 2048,
       apiKey
     });
   }
 
-  // Si ambos fallaron (ej. corte de red o cuota excedida temporalmente), degradación elegante
+  // Si ambos fallaron (ej. corte de red o cuota excedida temporalmente), degradación elegante inteligente
   if (!response.success || !response.text) {
-    const snippet = rawText.trim().slice(0, 500);
+    const paragraphs = rawText
+      .split(/\n\s*\n+/)
+      .map((p) => p.replace(/\s+/g, ' ').trim())
+      .filter((p) => p.length >= 60 && !p.startsWith('--- Página'));
+
+    const fallbackSummary = paragraphs.length >= 3
+      ? [
+          `**Contexto Inicial:** ${paragraphs[0]}`,
+          `**Desarrollo Central:** ${paragraphs[Math.floor(paragraphs.length / 2)]}`,
+          `**Conclusión / Sección Final:** ${paragraphs[paragraphs.length - 1]}`
+        ].join('\n')
+      : (rawText.trim().slice(0, 1000) || 'Sin contenido de texto disponible para resumir.');
+
     return {
       nom_arch: originalFileName || 'documento_analizado.txt',
       categoria: availableCategories[0] || 'General',
-      descripcion: snippet.slice(0, 200) || 'Documento procesado en modo de contingencia.',
-      resumen: snippet || 'Sin resumen disponible.',
+      descripcion: paragraphs[0] ? paragraphs[0].slice(0, 250) : 'Documento procesado en modo de contingencia.',
+      resumen: fallbackSummary,
       palabras_clave: [],
       contexto: 'General'
     };
@@ -329,11 +370,20 @@ ${categoriesContext}`;
 
   try {
     const parsed = JSON.parse(cleanJson);
+    let finalResumen = '';
+    if (Array.isArray(parsed.resumen)) {
+      finalResumen = parsed.resumen.map((r: any) => String(r).trim()).filter(Boolean).join('\n');
+    } else if (typeof parsed.resumen === 'string') {
+      finalResumen = parsed.resumen.trim();
+    } else {
+      finalResumen = cleanJson.slice(0, 1500);
+    }
+
     return {
       nom_arch: parsed.nom_arch || originalFileName || 'documento_analizado.txt',
       categoria: parsed.categoria || (availableCategories[0] ?? 'General'),
-      descripcion: parsed.descripcion || 'Documento procesado automáticamente por IA.',
-      resumen: parsed.resumen || rawText.slice(0, 500),
+      descripcion: parsed.descripcion || 'Documento analizado e indexado con DocuHub AI.',
+      resumen: finalResumen || rawText.slice(0, 1000),
       palabras_clave: Array.isArray(parsed.palabras_clave) ? parsed.palabras_clave.map(String) : [],
       contexto: parsed.contexto || 'General'
     };

@@ -1,4 +1,4 @@
-import { Bell, ChevronDown, LogOut, Menu, Search, ShieldCheck } from "lucide-react";
+import { Bell, ChevronDown, Loader2, LogOut, Menu, Search, ShieldCheck, X } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
 type TopbarProps = {
@@ -6,10 +6,11 @@ type TopbarProps = {
   onQueryChange: (query: string) => void;
   onMenuToggle: () => void;
   onAccountOpen: () => void;
+  isSearching?: boolean;
 };
 
 // Contiene la búsqueda global, el acceso móvil y el menú de cuenta del usuario.
-export function Topbar({ query, onQueryChange, onMenuToggle, onAccountOpen }: TopbarProps) {
+export function Topbar({ query, onQueryChange, onMenuToggle, onAccountOpen, isSearching = false }: TopbarProps) {
   const { user, isAdmin, logout } = useAuth();
 
   const displayName = user?.nombre || "Administrador";
@@ -44,13 +45,38 @@ export function Topbar({ query, onQueryChange, onMenuToggle, onAccountOpen }: To
       </div>
 
       <label className="search-box">
-        <Search size={17} />
+        {isSearching ? (
+          <Loader2 size={17} className="spinning" style={{ color: "#2563eb", flexShrink: 0 }} />
+        ) : (
+          <Search size={17} style={{ flexShrink: 0 }} />
+        )}
         <input
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
-          placeholder="Buscar en el repositorio por título, contenido, metadatos..."
+          placeholder="Búsqueda semántica con IA en el repositorio..."
         />
-        <kbd>Ctrl + K</kbd>
+        {query ? (
+          <button
+            type="button"
+            className="search-clear-btn"
+            onClick={() => onQueryChange("")}
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              color: "#64748b",
+              padding: "0 4px",
+              display: "flex",
+              alignItems: "center"
+            }}
+            title="Limpiar búsqueda"
+            aria-label="Limpiar búsqueda"
+          >
+            <X size={15} />
+          </button>
+        ) : (
+          <kbd>Ctrl + K</kbd>
+        )}
       </label>
 
       <button

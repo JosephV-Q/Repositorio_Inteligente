@@ -3,8 +3,7 @@ import type {
   CategoriaDetalle,
   CategoriaUpdateResult,
   CategoriaDeleteResult,
-  CreateCategoriaDto,
-  UpdateCategoriaDto
+  CreateCategoriaDto
 } from '../ApiClient.js';
 
 /**

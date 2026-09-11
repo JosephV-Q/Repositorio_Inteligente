@@ -1,5 +1,6 @@
 export type DocumentItem = {
   id: string;
+  repoId?: number;
   title: string;
   category: string;
   description: string;
@@ -12,4 +13,6 @@ export type DocumentItem = {
   palabras_clave?: string[];
   contexto?: string;
   createdAt?: string;
+  similarity?: number;
+  matchType?: "vector" | "texto" | "hibrido";
 };

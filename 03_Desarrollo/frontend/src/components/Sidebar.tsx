@@ -3,8 +3,10 @@ import {
   Check,
   ChevronDown,
   FileText,
+  GitCompare,
   LayoutGrid,
   Plus,
+  Sparkles,
   Trash2,
   X,
 } from "lucide-react";
@@ -20,6 +22,7 @@ type SidebarProps = {
   canManageCategories: boolean;
   onCategoryChange: (category: string) => void;
   onDashboardClick: () => void;
+  onComparativasClick?: () => void;
   onAddCategory?: (category: string) => void;
   onDeleteCategory?: (category: string) => void;
 };
@@ -35,6 +38,7 @@ export function Sidebar({
   canManageCategories,
   onCategoryChange,
   onDashboardClick,
+  onComparativasClick,
   onAddCategory,
   onDeleteCategory,
 }: SidebarProps) {
@@ -75,6 +79,18 @@ export function Sidebar({
           <ChevronDown size={14} />
         </button>
       )}
+
+      {/* Acceso directo a Comparativas y Conjuntos RVD */}
+      <button
+        type="button"
+        className="dashboard-link"
+        onClick={onComparativasClick}
+        style={{ marginTop: canViewDashboard ? "6px" : "12px", marginBottom: "6px" }}
+      >
+        <GitCompare size={16} style={{ color: "#4f46e5" }} />
+        <span>Comparativas RVD</span>
+        <Sparkles size={12} style={{ marginLeft: "auto", color: "#6366f1" }} />
+      </button>
 
       {/* Sección de Categorías con opción de añadir para Admin */}
       <div className="sidebar-section-title">
@@ -177,9 +193,6 @@ export function Sidebar({
         ))}
       </nav>
 
-      <button type="button" className="graph-button">
-        <BarChart3 size={15} /> Explorar Grafos
-      </button>
     </aside>
   );
 }

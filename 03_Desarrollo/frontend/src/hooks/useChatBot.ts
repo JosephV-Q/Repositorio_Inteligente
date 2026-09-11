@@ -33,7 +33,7 @@ export function useChatBot(options: UseChatBotOptions = {}) {
 
   // Suscribirse a los cambios del bot
   useEffect(() => {
-    const unsubscribe = botInstance.subscribe((updatedMessages, currentStatus) => {
+    const unsubscribe = botInstance.subscribe((updatedMessages: ChatMessage[], currentStatus: ChatBotStatus) => {
       setMessages(updatedMessages);
       setStatus(currentStatus);
     });

@@ -283,21 +283,6 @@ button {
   color: #fff;
   background: #2d71dc;
 }
-.graph-button {
-  margin-top: auto;
-  border: 0;
-  color: #fff;
-  background: #13213a;
-  border-radius: 9px;
-  padding: 10px;
-  font-size: 11px;
-  font-weight: 700;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 8px;
-  box-shadow: 0 4px 10px #10203b1c;
-}
 .main-area {
   flex: 1;
   min-width: 0;
@@ -2552,70 +2537,6 @@ button {
   font-size: 11.5px;
   color: #3b587d;
   line-height: 1.4;
-}
-
-/* Caja Demo */
-.login-quick-demo {
-  margin-top: 20px;
-  background: #f7fafe;
-  border: 1px dashed #c0d7f2;
-  border-radius: 10px;
-  padding: 12px 14px;
-}
-
-.demo-header {
-  font-size: 10.5px;
-  font-weight: 700;
-  color: #385072;
-  margin-bottom: 6px;
-}
-
-.demo-credentials-box {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.demo-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-}
-
-.demo-row small {
-  color: #798ea8;
-  width: 70px;
-}
-
-.demo-row code {
-  background: #ebf3fc;
-  padding: 1px 6px;
-  border-radius: 4px;
-  color: #104e9c;
-  font-weight: 600;
-  font-family: monospace;
-}
-
-.demo-fill-btn {
-  margin-top: 8px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  background: #ffffff;
-  border: 1px solid #b7d3f5;
-  border-radius: 6px;
-  color: #1259b3;
-  padding: 6px 10px;
-  font-size: 11px;
-  font-weight: 700;
-  transition: background 0.15s, border-color 0.15s;
-}
-
-.demo-fill-btn:hover:not(:disabled) {
-  background: #eef6ff;
-  border-color: #88b7ec;
 }
 
 .login-security-footer {

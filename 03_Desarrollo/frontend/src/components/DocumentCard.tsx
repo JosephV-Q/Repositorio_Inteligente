@@ -1,4 +1,4 @@
-import { Check, Trash2 } from "lucide-react";
+import { Check, Sparkles, Trash2 } from "lucide-react";
 import type { DocumentItem } from "../types/document";
 
 type DocumentCardProps = {
@@ -34,9 +34,30 @@ export function DocumentCard({
           {selected && <Check size={12} />}
         </span>
         <h2>{document.title}</h2>
-        <span className={`file-badge ${document.format.toLowerCase()}`}>
-          {document.format}
-        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: "5px", marginLeft: "auto" }}>
+          {document.similarity !== undefined && document.similarity > 0 && (
+            <span
+              style={{
+                fontSize: "10px",
+                fontWeight: 600,
+                padding: "2px 6px",
+                borderRadius: "8px",
+                background: "#eff6ff",
+                color: "#1d4ed8",
+                border: "1px solid #bfdbfe",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "3px",
+              }}
+              title={`Similitud semántica vectorial (pgvector): ${Math.round(document.similarity * 100)}%`}
+            >
+              <Sparkles size={10} style={{ color: "#2563eb" }} /> {Math.round(document.similarity * 100)}%
+            </span>
+          )}
+          <span className={`file-badge ${document.format.toLowerCase()}`}>
+            {document.format}
+          </span>
+        </div>
         {canDelete && onDelete && (
           <button
             type="button"

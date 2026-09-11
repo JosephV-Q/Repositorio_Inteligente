@@ -17,6 +17,7 @@
     "/api/auth/me",
     "/api/auth/test-token",
     "/api/repositorios",
+    "/api/repositorios/:id",
     "/api/repositorios/buscar",
     "/api/repositorios/procesar-texto",
     "/api/configuracion",

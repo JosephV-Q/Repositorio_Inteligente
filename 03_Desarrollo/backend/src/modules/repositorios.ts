@@ -207,7 +207,7 @@ export const RepositoriosModule = {
    */
   async findByNomArch(nom_arch: string, exact: boolean = false): Promise<Repositorio[]> {
     if (exact) {
-      return query<Repositorio>('SELECT * FROM repositorios WHERE nom_arch = $1;', [nom_arch]);
+      return query<Repositorio>('SELECT * FROM repositorios WHERE LOWER(TRIM(nom_arch)) = LOWER(TRIM($1));', [nom_arch]);
     }
     return query<Repositorio>('SELECT * FROM repositorios WHERE nom_arch ILIKE $1;', [`%${nom_arch}%`]);
   },

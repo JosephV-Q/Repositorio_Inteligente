@@ -10,16 +10,18 @@ import { Sidebar } from "./components/Sidebar";
 import { Topbar } from "./components/Topbar";
 import { UploadModal } from "./components/UploadModal";
 import { ChatBotWidget } from "./components/ChatBotWidget";
+import { RvdSummaryModal } from "./components/RvdSummaryModal";
+import { ComparativasModal } from "./components/ComparativasModal";
 import { AuthProvider } from "./context/AuthProvider";
 import { useAuth } from "./context/AuthContext";
-import { categories as defaultCategories, documents as initialDocuments } from "./data/documents";
-import { api } from "./services/api";
+import { categories as defaultCategories } from "./data/documents";
+import { api, Repositorio } from "./services/api";
 import type { DocumentItem } from "./types/document";
 
 function MainContent() {
   const { isAuthenticated, isLoading, user, isAdmin } = useAuth();
 
-  const [docList, setDocList] = useState<DocumentItem[]>(initialDocuments);
+  const [docList, setDocList] = useState<DocumentItem[]>([]);
   const [categoriesList, setCategoriesList] = useState<string[]>(defaultCategories);
   const [activeCategory, setActiveCategory] = useState("Todas las categorías");
   const [isRvdMode, setIsRvdMode] = useState(false);
@@ -29,8 +31,12 @@ function MainContent() {
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [isSearching, setIsSearching] = useState(false);
+  const [semanticResults, setSemanticResults] = useState<DocumentItem[] | null>(null);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [showDashboard, setShowDashboard] = useState(false);
+  const [showRvdModal, setShowRvdModal] = useState(false);
+  const [showComparativasModal, setShowComparativasModal] = useState(false);
 
   // Limitantes específicas por rol:
   // - Rol 3 (Usuario / Lector): No sube archivos, no realiza RVD, no ve Dashboard.
@@ -92,6 +98,7 @@ function MainContent() {
             const validFormat = ext === "PDF" || ext === "DOCX" || ext === "TXT" ? ext : "PDF";
             return {
               id: `REPO-${repo.id}`,
+              repoId: repo.id,
               title: repo.nom_arch || "Documento sin título",
               category: repo.categoria || "Proyectos Activos",
               description:
@@ -105,14 +112,40 @@ function MainContent() {
                   : ["Documento verificado e indexado en el clúster RVD."],
               driveFileId: repo.driveFileId,
               viewUrl: repo.ruta_arch,
+              contexto: repo.contexto,
+              palabras_clave: Array.isArray(repo.palabras_clave) ? repo.palabras_clave : undefined,
             };
           });
 
+          // Deduplicar por título normalizado para asegurar que no se muestre 2 veces
+          const seenDocs = new Map<string, DocumentItem>();
+          for (const doc of remoteDocs) {
+            const key = doc.title.trim().toLowerCase();
+            if (!seenDocs.has(key)) {
+              seenDocs.set(key, doc);
+            }
+          }
+          const uniqueRemoteDocs = Array.from(seenDocs.values());
+
           setDocList((current) => {
-            const existingIds = new Set(current.map((d) => d.id));
-            const newOnes = remoteDocs.filter((d) => !existingIds.has(d.id));
-            return [...newOnes, ...current];
+            const remoteIds = new Set(uniqueRemoteDocs.map((d) => d.id));
+            const remoteTitles = new Set(uniqueRemoteDocs.map((d) => d.title.trim().toLowerCase()));
+            const optimisticLocal = current.filter(
+              (d) => !remoteIds.has(d.id) && !remoteTitles.has(d.title.trim().toLowerCase())
+            );
+            return [...uniqueRemoteDocs, ...optimisticLocal];
           });
+
+          // Sincronizar categorías que vengan de la base de datos
+          const remoteCategories = Array.from(
+            new Set(uniqueRemoteDocs.map((d) => d.category).filter(Boolean))
+          );
+          if (remoteCategories.length > 0) {
+            setCategoriesList((prev) => {
+              const combined = new Set([...prev, ...remoteCategories]);
+              return Array.from(combined);
+            });
+          }
         }
       } catch (err) {
         console.warn("No se pudieron cargar repositorios remotos:", err);
@@ -156,32 +189,130 @@ function MainContent() {
     setTimeout(() => setToastMessage(null), 3000);
   };
 
-  const handleDeleteDocument = (id: string) => {
-    const doc = docList.find((d) => d.id === id);
+  const handleDeleteDocument = async (id: string) => {
+    const doc = docList.find((d) => d.id === id) || semanticResults?.find((d) => d.id === id);
     const title = doc?.title || id;
+
+    // 1. Eliminar inmediatamente del estado local de la interfaz (optimista)
     setDocList((prev) => prev.filter((d) => d.id !== id));
+    setSemanticResults((prev) => (prev ? prev.filter((d) => d.id !== id) : null));
     setSelectedIds((prev) => prev.filter((selectedId) => selectedId !== id));
     if (activeDocument?.id === id) {
       setActiveDocument(null);
     }
-    setToastMessage(`Documento "${title}" eliminado.`);
-    setTimeout(() => setToastMessage(null), 3500);
+
+    // 2. Extraer el identificador y eliminar de la base de datos con api.deleteRepositorio(id)
+    const targetId = doc?.repoId ?? id;
+
+    try {
+      await api.deleteRepositorio(targetId);
+      setToastMessage(`Documento "${title}" eliminado permanentemente.`);
+    } catch (err: any) {
+      console.error("Error al eliminar repositorio de la base de datos:", err);
+      setToastMessage(`Error al eliminar "${title}": ${err?.message || "No se pudo borrar de la base de datos"}`);
+    } finally {
+      setTimeout(() => setToastMessage(null), 3500);
+    }
   };
 
+  // Búsqueda semántica híbrida con Repositorio.buscar ('término', opciones?)
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      setSemanticResults(null);
+      setIsSearching(false);
+      return;
+    }
+
+    let isMounted = true;
+    setIsSearching(true);
+
+    const timer = setTimeout(async () => {
+      try {
+        const results = await Repositorio.buscar(trimmed, {
+          categoria: activeCategory !== "Todas las categorías" ? activeCategory : undefined,
+          limit: 30,
+          modo: "hibrido",
+        });
+
+        if (!isMounted) return;
+
+        const mapped: DocumentItem[] = results.map((repo) => {
+          const ext = repo.nom_arch ? repo.nom_arch.split(".").pop()?.toUpperCase() : "PDF";
+          const validFormat = ext === "PDF" || ext === "DOCX" || ext === "TXT" ? ext : "PDF";
+          return {
+            id: `REPO-${repo.id}`,
+            repoId: repo.id,
+            title: repo.nom_arch || "Documento",
+            category: repo.categoria || "Proyectos Activos",
+            description: repo.descripcion || "Documento recuperado por búsqueda semántica.",
+            format: validFormat,
+            author: user?.nombre || "Repositorio Institucional",
+            summary: repo.resumen
+              ? repo.resumen.split("\n").filter((l: string) => l.trim().length > 0)
+              : repo.palabras_clave && repo.palabras_clave.length > 0
+                ? repo.palabras_clave
+                : ["Coincidencia semántica en el repositorio."],
+            driveFileId: (repo as any).driveFileId,
+            viewUrl: repo.ruta_arch,
+            contexto: repo.contexto || undefined,
+            palabras_clave: Array.isArray(repo.palabras_clave) ? repo.palabras_clave : undefined,
+            similarity: repo.similarity,
+            matchType: repo.matchType,
+          };
+        });
+
+        setSemanticResults(mapped);
+      } catch (err) {
+        console.warn("Aviso al ejecutar Repositorio.buscar:", err);
+        if (isMounted) setSemanticResults(null);
+      } finally {
+        if (isMounted) setIsSearching(false);
+      }
+    }, 320);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+    };
+  }, [query, activeCategory, user]);
+
   const visibleDocuments = useMemo(() => {
-    const filtered = docList.filter((document) => {
+    const trimmed = query.trim().toLowerCase();
+    if (!trimmed) {
+      const filtered = docList.filter((document) => {
+        return (
+          activeCategory === "Todas las categorías" ||
+          document.category === activeCategory
+        );
+      });
+      return [...filtered].sort((a, b) => a.title.localeCompare(b.title));
+    }
+
+    // Si la búsqueda semántica en backend retornó resultados
+    if (semanticResults !== null) {
+      return semanticResults;
+    }
+
+    // Fallback de coincidencia local inmediata mientras carga o si está desconectado
+    const localFiltered = docList.filter((document) => {
       const matchesCategory =
         activeCategory === "Todas las categorías" ||
         document.category === activeCategory;
       const matchesQuery =
-        !query.trim() ||
-        `${document.title} ${document.description}`
+        `${document.title} ${document.description} ${document.category} ${(document.summary || []).join(" ")} ${(document.palabras_clave || []).join(" ")}`
           .toLowerCase()
-          .includes(query.toLowerCase());
+          .includes(trimmed);
       return matchesCategory && matchesQuery;
     });
-    return [...filtered].sort((a, b) => a.title.localeCompare(b.title));
-  }, [docList, activeCategory, query]);
+    return [...localFiltered].sort((a, b) => a.title.localeCompare(b.title));
+  }, [docList, activeCategory, query, semanticResults]);
+
+  const selectedDocuments = useMemo(() => {
+    return selectedIds
+      .map((id) => docList.find((d) => d.id === id) || semanticResults?.find((d) => d.id === id))
+      .filter((d): d is DocumentItem => Boolean(d));
+  }, [selectedIds, docList, semanticResults]);
 
   const clearSelection = () => setSelectedIds([]);
   const openDocument = (document: DocumentItem) => {
@@ -206,14 +337,35 @@ function MainContent() {
   };
 
   const handleUploadSuccess = (newDoc: DocumentItem) => {
-    setDocList((current) => [newDoc, ...current]);
+    if (newDoc.category && !categoriesList.includes(newDoc.category)) {
+      setCategoriesList((prev) => Array.from(new Set([...prev, newDoc.category])));
+    }
+    setDocList((current) => {
+      const isDuplicate = current.some(
+        (d) => d.id === newDoc.id || d.title.trim().toLowerCase() === newDoc.title.trim().toLowerCase()
+      );
+      if (isDuplicate) {
+        return current.map((d) =>
+          d.id === newDoc.id || d.title.trim().toLowerCase() === newDoc.title.trim().toLowerCase()
+            ? newDoc
+            : d
+        );
+      }
+      return [newDoc, ...current];
+    });
     if (activeCategory !== "Todas las categorías") {
       setActiveCategory(newDoc.category);
     }
-    setToastMessage(`Documento "${newDoc.title}" subido y analizado con éxito.`);
+    setToastMessage(`Documento "${newDoc.title}" indexado en la categoría "${newDoc.category}".`);
     setTimeout(() => {
       setToastMessage(null);
     }, 4500);
+  };
+
+  const handleUploadModalClose = () => {
+    setShowUploadModal(false);
+    setShowDashboard(false);
+    setActiveCategory("Todas las categorías");
   };
 
   // 1. Pantalla de carga inicial
@@ -285,6 +437,7 @@ function MainContent() {
         }}
         onAddCategory={handleAddCategory}
         onDeleteCategory={handleDeleteCategory}
+        onComparativasClick={() => setShowComparativasModal(true)}
       />
       <main className="main-area">
         <Topbar
@@ -292,6 +445,7 @@ function MainContent() {
           onQueryChange={setQuery}
           onMenuToggle={() => setMobileMenu(!mobileMenu)}
           onAccountOpen={() => setShowAccount(true)}
+          isSearching={isSearching}
         />
         {showDashboard && canViewDashboard ? (
           <Dashboard
@@ -315,30 +469,74 @@ function MainContent() {
             onRvdClose={closeRvdMode}
             onUploadClick={canUpload ? () => setShowUploadModal(true) : undefined}
             onDeleteDocument={canDeleteDocument ? handleDeleteDocument : undefined}
+            query={query}
+            isSemanticSearchActive={semanticResults !== null && query.trim().length > 0}
           />
         )}
       </main>
       {selectedIds.length > 0 && canRvd && (
         <div className="selection-dock">
           <span>
-            <Check size={16} /> {selectedIds.length} seleccionados
+            <Check size={16} /> {selectedIds.length}{" "}
+            {selectedIds.length === 1 ? "seleccionado" : "seleccionados"}
           </span>
           <button type="button" onClick={clearSelection}>
             Limpiar
           </button>
+          {selectedIds.length === 1 && (
+            <button
+              type="button"
+              onClick={() =>
+                setActiveDocument(
+                  selectedDocuments[0] ||
+                    docList.find((document) => document.id === selectedIds[0]) ||
+                    null,
+                )
+              }
+              title="Ver detalle del archivo individual"
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "#475569",
+                fontSize: "11px",
+                fontWeight: 600,
+                cursor: "pointer",
+                padding: "4px 8px",
+              }}
+            >
+              Ver detalle
+            </button>
+          )}
           <button
             type="button"
             className="dock-primary"
-            onClick={() =>
-              setActiveDocument(
-                docList.find((document) => document.id === selectedIds[0]) ??
-                  null,
-              )
-            }
+            onClick={() => setShowRvdModal(true)}
+            title="Generar resumen en conjunto con Gemini AI a partir de los resúmenes individuales"
           >
-            <Sparkles size={15} /> Ver resumen
+            <Sparkles size={15} />{" "}
+            {selectedIds.length > 1
+              ? `Resumen en conjunto (${selectedIds.length})`
+              : "Resumen con IA"}
           </button>
         </div>
+      )}
+      {showRvdModal && (
+        <RvdSummaryModal
+          isOpen={showRvdModal}
+          onClose={() => setShowRvdModal(false)}
+          selectedDocuments={selectedDocuments}
+          onOpenDocument={(doc) => {
+            setShowRvdModal(false);
+            setActiveDocument(doc);
+          }}
+          onOpenComparativas={() => setShowComparativasModal(true)}
+        />
+      )}
+      {showComparativasModal && (
+        <ComparativasModal
+          isOpen={showComparativasModal}
+          onClose={() => setShowComparativasModal(false)}
+        />
       )}
       {activeDocument && (
         <DocumentDetail
@@ -351,9 +549,10 @@ function MainContent() {
       {showAccount && <AccountPanel onClose={() => setShowAccount(false)} />}
       <UploadModal
         isOpen={showUploadModal}
-        onClose={() => setShowUploadModal(false)}
+        onClose={handleUploadModalClose}
         onUpload={handleUploadSuccess}
         currentCategory={activeCategory}
+        categories={categoriesList}
       />
       {toastMessage && (
         <div className="upload-toast" role="status">
@@ -371,6 +570,7 @@ function MainContent() {
       <ChatBotWidget
         activeDocument={activeDocument}
         activeCategory={activeCategory}
+        onDocumentSelect={(doc) => setActiveDocument(doc)}
       />
     </div>
   );

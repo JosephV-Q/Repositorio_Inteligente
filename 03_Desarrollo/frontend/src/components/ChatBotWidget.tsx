@@ -22,6 +22,7 @@ import type { DocumentItem } from '../types/document';
 interface ChatBotWidgetProps {
   activeDocument?: DocumentItem | null;
   activeCategory?: string;
+  onDocumentSelect?: (document: DocumentItem) => void;
 }
 
 /**
@@ -123,7 +124,7 @@ function InlineFormat({ text }: { text: string }) {
   );
 }
 
-export function ChatBotWidget({ activeDocument, activeCategory }: ChatBotWidgetProps) {
+export function ChatBotWidget({ activeDocument, activeCategory, onDocumentSelect }: ChatBotWidgetProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [inputPrompt, setInputPrompt] = useState('');
@@ -193,7 +194,15 @@ export function ChatBotWidget({ activeDocument, activeCategory }: ChatBotWidgetP
     }
 
     try {
-      await sendMessage(text, { extraContext });
+      await sendMessage(text, {
+        extraContext,
+        semanticSearch: true,
+        semanticOptions: {
+          categoria: activeCategory && activeCategory !== 'Todas las categorías' ? activeCategory : undefined,
+          limit: 4,
+          modo: 'hibrido',
+        }
+      });
     } catch (err) {
       console.error('[ChatBotWidget] Error al enviar mensaje:', err);
     }
@@ -254,7 +263,9 @@ export function ChatBotWidget({ activeDocument, activeCategory }: ChatBotWidgetP
               <div className="chatbot-header-info">
                 <div className="chatbot-title-row">
                   <strong>DocuHub AI</strong>
-                  <span className="chatbot-model-badge">Gemini 2.5</span>
+                  <span className="chatbot-model-badge" style={{ background: '#dbeafe', color: '#1d4ed8', border: '1px solid #bfdbfe' }}>
+                    <Sparkles size={10} style={{ display: 'inline', marginRight: 3 }} /> pgvector Semántico
+                  </span>
                 </div>
                 <small className="chatbot-subtitle">
                   {isThinking
@@ -367,7 +378,91 @@ export function ChatBotWidget({ activeDocument, activeCategory }: ChatBotWidgetP
                             <span />
                           </div>
                         ) : (
-                          <FormattedMessage text={message.content} />
+                          <>
+                            <FormattedMessage text={message.content} />
+                            {message.metadata?.matchedDocuments && message.metadata.matchedDocuments.length > 0 && (
+                              <div
+                                style={{
+                                  marginTop: '10px',
+                                  paddingTop: '8px',
+                                  borderTop: '1px solid rgba(226, 232, 240, 0.8)',
+                                  fontSize: '11px'
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '5px',
+                                    fontWeight: 600,
+                                    color: '#2563eb',
+                                    marginBottom: '6px'
+                                  }}
+                                >
+                                  <Sparkles size={12} />
+                                  <span>Fuentes semánticas del repositorio (pgvector):</span>
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                                  {message.metadata.matchedDocuments.map((doc: any, docIdx: number) => (
+                                    <button
+                                      key={doc.id || docIdx}
+                                      type="button"
+                                      style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'space-between',
+                                        textAlign: 'left',
+                                        background: '#f8fafc',
+                                        border: '1px solid #cbd5e1',
+                                        borderRadius: '6px',
+                                        padding: '5px 8px',
+                                        cursor: 'pointer',
+                                        gap: '6px',
+                                        color: '#1e293b'
+                                      }}
+                                      onClick={() => {
+                                        if (onDocumentSelect) {
+                                          const ext = doc.nom_arch ? doc.nom_arch.split('.').pop()?.toUpperCase() : 'PDF';
+                                          const validFormat = ext === 'PDF' || ext === 'DOCX' || ext === 'TXT' ? ext : 'PDF';
+                                          onDocumentSelect({
+                                            id: `REPO-${doc.id}`,
+                                            title: doc.nom_arch,
+                                            category: doc.categoria || 'Proyectos Activos',
+                                            description: doc.descripcion || '',
+                                            format: validFormat,
+                                            author: 'Repositorio',
+                                            summary: doc.resumen ? doc.resumen.split('\n').filter(Boolean) : [],
+                                            viewUrl: doc.ruta_arch,
+                                            ruta_arch: doc.ruta_arch
+                                          });
+                                        } else if (doc.ruta_arch) {
+                                          window.open(doc.ruta_arch, '_blank');
+                                        }
+                                      }}
+                                      title={`Consultar ${doc.nom_arch}`}
+                                    >
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0, overflow: 'hidden' }}>
+                                        <FileText size={13} style={{ color: '#3b82f6', flexShrink: 0 }} />
+                                        <span style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                          {doc.nom_arch}
+                                        </span>
+                                        {doc.categoria && (
+                                          <span style={{ fontSize: '10px', background: '#e0e7ff', color: '#3730a3', padding: '1px 5px', borderRadius: '4px', flexShrink: 0 }}>
+                                            {doc.categoria}
+                                          </span>
+                                        )}
+                                      </div>
+                                      {doc.similarity !== undefined && doc.similarity > 0 && (
+                                        <span style={{ fontSize: '10px', color: '#16a34a', fontWeight: 600, flexShrink: 0 }}>
+                                          {Math.round(doc.similarity * 100)}% relevancia
+                                        </span>
+                                      )}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </>
                         )
                       ) : (
                         <p className="chat-user-text">{message.content}</p>
@@ -431,7 +526,7 @@ export function ChatBotWidget({ activeDocument, activeCategory }: ChatBotWidgetP
                 </div>
                 <div className="chat-bubble thinking-bubble">
                   <Sparkles size={13} className="spin-slow" />
-                  <span>DocuHub AI está formulando una respuesta...</span>
+                  <span>DocuHub AI está consultando semánticamente los repositorios...</span>
                 </div>
               </div>
             )}
@@ -443,10 +538,15 @@ export function ChatBotWidget({ activeDocument, activeCategory }: ChatBotWidgetP
           {messages.length <= 2 && (
             <div className="chatbot-suggestions">
               <div className="suggestions-title">
-                <Sparkles size={12} /> Sugerencias de conversación:
+                <Sparkles size={12} /> Búsqueda y consultas semánticas:
               </div>
               <div className="suggestions-pills">
-                {suggestedPrompts.slice(0, 3).map((prompt, idx) => (
+                {[
+                  "🔍 Buscar auditorías y normativas de seguridad",
+                  "🔍 Buscar contratos y acuerdos legales",
+                  "🔍 Buscar especificaciones técnicas y microservicios",
+                  ...suggestedPrompts.slice(0, 1)
+                ].map((prompt: string, idx: number) => (
                   <button
                     key={idx}
                     type="button"
@@ -468,7 +568,7 @@ export function ChatBotWidget({ activeDocument, activeCategory }: ChatBotWidgetP
                 value={inputPrompt}
                 onChange={(e) => setInputPrompt(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Escribe tu mensaje a DocuHub AI... (Enter para enviar)"
+                placeholder="Pregunta a la IA o busca en repositorios... (Enter para enviar)"
                 rows={1}
                 disabled={isThinking}
               />

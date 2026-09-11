@@ -4,8 +4,7 @@ import type {
   CreateComparativaDto,
   UpdateComparativaDto,
   ComparativaFilters,
-  BuscarComparativasParams,
-  ComparativaSearchResult
+  BuscarComparativasParams
 } from '../ApiClient.js';
 
 /**

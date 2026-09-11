@@ -120,6 +120,9 @@ export interface ProcesarTextoDocumentoDto {
   driveFileId?: string;
   categoria?: string;
   contexto?: string;
+  resumen?: string;
+  descripcion?: string;
+  palabras_clave?: string[];
 }
 
 export interface ProcesarTextoResponse {
@@ -1217,14 +1220,7 @@ export class ApiClient {
    * Envía texto en bruto de un documento para que Gemini extraiga metadatos automáticamente,
    * genere su embedding vectorial de 768 dimensiones y lo registre en repositorios.
    */
-  public async procesarTextoDocumento(data: {
-    texto: string;
-    nom_arch?: string;
-    ruta_arch?: string;
-    driveFileId?: string;
-    categoria?: string;
-    contexto?: string;
-  }): Promise<Repositorio> {
+  public async procesarTextoDocumento(data: ProcesarTextoDocumentoDto): Promise<Repositorio> {
     const res = await this.request<any>('/api/repositorios/procesar-texto', {
       method: 'POST',
       body: data
@@ -1260,9 +1256,13 @@ export class ApiClient {
 
   /**
    * Elimina un registro de repositorio por ID.
+   * Admite tanto el ID numérico (ej: 14) como el identificador formateado (ej: "REPO-14").
    */
-  public async deleteRepositorio(id: number): Promise<GenericSuccessResponse> {
-    return this.request<GenericSuccessResponse>(`/api/repositorios/${id}`, {
+  public async deleteRepositorio(id: number | string): Promise<GenericSuccessResponse> {
+    const cleanId = typeof id === 'string' ? id.replace(/^(?:REPO-|repo-)/i, '').trim() : id;
+    const numericId = Number(cleanId);
+    const targetId = isNaN(numericId) ? cleanId : numericId;
+    return this.request<GenericSuccessResponse>(`/api/repositorios/${targetId}`, {
       method: 'DELETE'
     });
   }
@@ -1392,6 +1392,63 @@ export class ApiClient {
       repositorio: res.repositorio!,
       uploadUrl: res.viewUrl,
       driveFileId: res.driveFileId
+    };
+  }
+
+  /**
+   * Flujo integrado de registro de repositorio y subida de archivos:
+   * 1. Sube el archivo a Google Drive mediante `api.subirArchivo(file, params)`.
+   * 2. Obtiene el enlace oficial del archivo mediante `api.getRepositorios(filtros)`.
+   * 3. Si se proporciona texto extraído en memoria, procesa y enriquece el repositorio con `api.procesarTextoDocumento`.
+   */
+  public async subirYProcesarRepositorio(
+    file: { name?: string; size?: number; type?: string } & any,
+    params: SubirArchivoParams & { texto?: string } = {}
+  ): Promise<{
+    uploadResult: SubirArchivoResult;
+    enlace: string;
+    repositorio: Repositorio;
+  }> {
+    const fileName = params.nom_arch || file?.name || 'archivo_sin_nombre';
+
+    // 1. Subir el archivo al servidor / Google Drive
+    const uploadResult = await this.subirArchivo(file, params);
+
+    // 2. Obtener el enlace del mismo archivo usando getRepositorios
+    let enlace = uploadResult.viewUrl || '';
+    try {
+      const repos = await this.getRepositorios({
+        nom_arch: fileName,
+        categoria: params.categoria || undefined
+      });
+      const matchingRepo = Array.isArray(repos)
+        ? (repos.find((r) => r.nom_arch === fileName || (uploadResult.repositorio?.id && r.id === uploadResult.repositorio.id)) || repos[0])
+        : null;
+
+      if (matchingRepo?.ruta_arch) {
+        enlace = matchingRepo.ruta_arch;
+      }
+    } catch {
+      // Fallback al viewUrl retornado por la subida
+    }
+
+    // 3 y 4. Si se dispone del texto extraído, generar y registrar el repositorio con IA
+    let finalRepo = uploadResult.repositorio;
+    if (params.texto && params.texto.trim().length > 0) {
+      finalRepo = await this.procesarTextoDocumento({
+        texto: params.texto,
+        nom_arch: fileName,
+        ruta_arch: enlace,
+        driveFileId: uploadResult.driveFileId,
+        categoria: params.categoria || undefined,
+        contexto: params.contexto || undefined
+      });
+    }
+
+    return {
+      uploadResult,
+      enlace,
+      repositorio: finalRepo || uploadResult.repositorio!
     };
   }
 

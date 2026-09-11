@@ -5,6 +5,7 @@ import {
   CreateComparativaDto,
   UpdateComparativaDto
 } from '../modules/index.js';
+import { generateEmbedding } from '../gemini/index.js';
 
 /**
  * Obtener todas las comparativas o filtrar según query params
@@ -115,6 +116,24 @@ export async function createComparativa(req: Request, res: Response): Promise<vo
       contexto: contexto ? String(contexto).trim() : null,
       embedding: req.body.embedding !== undefined ? req.body.embedding : undefined
     };
+
+    if (!dto.embedding) {
+      const textToEmbed = [
+        dto.titulo,
+        dto.descripcion || '',
+        dto.comparativa || '',
+        dto.categoria || '',
+        dto.contexto || ''
+      ].filter(Boolean).join(' - ');
+
+      if (textToEmbed.trim().length > 0) {
+        try {
+          dto.embedding = await generateEmbedding(textToEmbed);
+        } catch (embErr: any) {
+          console.warn('⚠️ [createComparativa] No se pudo generar embedding automáticamente:', embErr?.message);
+        }
+      }
+    }
 
     const nuevaComparativa = await ComparativasModule.create(dto);
 

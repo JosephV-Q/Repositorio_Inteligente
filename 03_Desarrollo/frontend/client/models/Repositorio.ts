@@ -6,9 +6,8 @@ import type {
   RepositorioFilters,
   ProcesarTextoDocumentoDto,
   SubirArchivoParams,
-  SubirArchivoResponse,
-  BuscarRepositoriosParams,
-  RepositorioSearchResult
+  SubirArchivoResult,
+  BuscarRepositoriosParams
 } from '../ApiClient.js';
 
 /**
@@ -60,14 +59,24 @@ export class Repositorio implements IRepositorio {
   // MÉTODOS ESTÁTICOS
   // ==========================================================================
 
+  public static defaultClient: ApiClient = api;
+
+  /**
+   * Configura la instancia de ApiClient por defecto para todos los métodos estáticos.
+   */
+  public static setDefaultClient(client: ApiClient): void {
+    Repositorio.defaultClient = client;
+  }
+
   /**
    * Consulta repositorios aplicando filtros opcionales.
    */
   public static async fetchAll(
     filters?: RepositorioFilters,
-    client: ApiClient = api
+    client?: ApiClient
   ): Promise<Repositorio[]> {
-    const rows = await client.getRepositorios(filters);
+    const activeClient = client || Repositorio.defaultClient || api;
+    const rows = await activeClient.getRepositorios(filters);
     return rows.map((r) => new Repositorio(r));
   }
 
@@ -76,9 +85,10 @@ export class Repositorio implements IRepositorio {
    */
   public static async fetchById(
     id: number,
-    client: ApiClient = api
+    client?: ApiClient
   ): Promise<Repositorio> {
-    const data = await client.getRepositorioById(id);
+    const activeClient = client || Repositorio.defaultClient || api;
+    const data = await activeClient.getRepositorioById(id);
     return new Repositorio(data);
   }
 
@@ -87,9 +97,10 @@ export class Repositorio implements IRepositorio {
    */
   public static async create(
     dto: CreateRepositorioDto,
-    client: ApiClient = api
+    client?: ApiClient
   ): Promise<Repositorio> {
-    const data = await client.createRepositorio(dto);
+    const activeClient = client || Repositorio.defaultClient || api;
+    const data = await activeClient.createRepositorio(dto);
     return new Repositorio(data);
   }
 
@@ -99,9 +110,26 @@ export class Repositorio implements IRepositorio {
   public static async subirArchivo(
     file: File | Blob,
     params: SubirArchivoParams = {},
-    client: ApiClient = api
-  ): Promise<SubirArchivoResponse> {
-    return client.subirArchivo(file, params);
+    client?: ApiClient
+  ): Promise<SubirArchivoResult> {
+    const activeClient = client || Repositorio.defaultClient || api;
+    return activeClient.subirArchivo(file, params);
+  }
+
+  /**
+   * Flujo integrado: Sube a Drive, obtiene enlace desde getRepositorios y procesa con IA.
+   */
+  public static async subirYProcesar(
+    file: File | Blob,
+    params: SubirArchivoParams & { texto?: string } = {},
+    client?: ApiClient
+  ): Promise<{ uploadResult: SubirArchivoResult; enlace: string; repositorio: Repositorio }> {
+    const activeClient = client || Repositorio.defaultClient || api;
+    const result = await activeClient.subirYProcesarRepositorio(file, params);
+    return {
+      ...result,
+      repositorio: new Repositorio(result.repositorio)
+    };
   }
 
   /**
@@ -109,9 +137,10 @@ export class Repositorio implements IRepositorio {
    */
   public static async procesarTexto(
     dto: ProcesarTextoDocumentoDto,
-    client: ApiClient = api
+    client?: ApiClient
   ): Promise<Repositorio> {
-    const data = await client.procesarTextoDocumento(dto);
+    const activeClient = client || Repositorio.defaultClient || api;
+    const data = await activeClient.procesarTextoDocumento(dto);
     return new Repositorio(data);
   }
 
@@ -121,18 +150,22 @@ export class Repositorio implements IRepositorio {
    * 
    * @param query Texto de búsqueda en lenguaje natural o parámetros completos
    * @param options Opciones adicionales (categoria, limit, minSimilarity, modo)
-   * @param client Instancia de ApiClient
+   * @param client Instancia de ApiClient opcional (por defecto usa Repositorio.defaultClient o api)
+   * 
+   * @example
+   * const docs = await Repositorio.buscar('presupuestos y balances', { limit: 5 });
    */
   public static async buscar(
     query: string | BuscarRepositoriosParams,
     options: Omit<BuscarRepositoriosParams, 'texto' | 'query'> = {},
-    client: ApiClient = api
+    client?: ApiClient
   ): Promise<Array<Repositorio & { similarity?: number; matchType?: 'vector' | 'texto' | 'hibrido' }>> {
+    const activeClient = client || Repositorio.defaultClient || api;
     const params: BuscarRepositoriosParams = typeof query === 'string'
       ? { texto: query, ...options }
       : { ...query, ...options };
 
-    const items = await client.buscarRepositorios(params);
+    const items = await activeClient.buscarRepositorios(params);
     return items.map((item) => {
       const repo = new Repositorio(item);
       return Object.assign(repo, {

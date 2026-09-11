@@ -10,6 +10,8 @@ type DocumentLibraryProps = {
   canUpload?: boolean;
   canRvd?: boolean;
   canDeleteDocument?: boolean;
+  query?: string;
+  isSemanticSearchActive?: boolean;
   onRvdToggle: () => void;
   onDocumentOpen: (document: DocumentItem) => void;
   onRvdClose: () => void;
@@ -26,6 +28,8 @@ export function DocumentLibrary({
   canUpload = true,
   canRvd = true,
   canDeleteDocument = false,
+  query = "",
+  isSemanticSearchActive = false,
   onRvdToggle,
   onDocumentOpen,
   onRvdClose,
@@ -39,8 +43,33 @@ export function DocumentLibrary({
           <p className="eyebrow">
             BIBLIOTECA DOCUMENTAL / {activeCategory.toUpperCase()}
           </p>
-          <h1>{activeCategory}</h1>
-          <p>Mostrando {documents.length} documentos analizados recientemente</p>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+            <h1>{query.trim() ? `Resultados: "${query.trim()}"` : activeCategory}</h1>
+            {isSemanticSearchActive && (
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "5px",
+                  fontSize: "11px",
+                  color: "#1d4ed8",
+                  background: "#eff6ff",
+                  border: "1px solid #bfdbfe",
+                  padding: "3px 9px",
+                  borderRadius: "12px",
+                  fontWeight: 600,
+                }}
+                title="Resultados ordenados por relevancia vectorial usando pgvector y Gemini embeddings"
+              >
+                <Sparkles size={11} style={{ color: "#2563eb" }} /> Búsqueda semántica IA (pgvector)
+              </span>
+            )}
+          </div>
+          <p>
+            {query.trim()
+              ? `Mostrando ${documents.length} documento${documents.length === 1 ? "" : "s"} ordenados por relevancia semántica`
+              : `Mostrando ${documents.length} documentos analizados recientemente`}
+          </p>
         </div>
         <div className="heading-actions">
           {/* Subir archivo: Oculto para Rol 3 (Usuario) */}

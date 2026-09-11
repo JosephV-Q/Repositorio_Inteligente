@@ -13,7 +13,8 @@ import {
 } from '../drive/index.js';
 import {
   analyzeDocumentText,
-  generateEmbedding
+  generateEmbedding,
+  DocumentAnalysisResult
 } from '../gemini/index.js';
 
 /**
@@ -181,12 +182,48 @@ export async function createRepositorio(req: Request, res: Response): Promise<vo
       embedding: req.body.embedding !== undefined ? req.body.embedding : undefined
     };
 
-    const nuevoRepositorio = await RepositoriosModule.create(dto);
+    // Verificar si ya existe por ruta_arch (mismo archivo o Drive URL) o por nombre exacto de archivo
+    let existente: Repositorio | null = null;
+    if (finalRuta && finalRuta !== 'texto-plano') {
+      const porRuta = await RepositoriosModule.findByProperty('ruta_arch', finalRuta);
+      if (porRuta.length > 0) {
+        existente = porRuta[0];
+      }
+    }
+    if (!existente && dto.nom_arch) {
+      const porNombre = await RepositoriosModule.findByNomArch(dto.nom_arch, true);
+      if (porNombre.length > 0) {
+        existente = porNombre[0];
+      }
+    }
 
-    res.status(201).json({
+    let repositorioFinal: Repositorio;
+    let yaExistia = false;
+
+    if (existente && existente.id) {
+      const actualizado = await RepositoriosModule.update(existente.id, {
+        nom_arch: dto.nom_arch,
+        ruta_arch: dto.ruta_arch,
+        categoria: dto.categoria || existente.categoria,
+        descripcion: dto.descripcion || existente.descripcion,
+        resumen: dto.resumen || existente.resumen,
+        palabras_clave: dto.palabras_clave && dto.palabras_clave.length > 0 ? dto.palabras_clave : existente.palabras_clave,
+        contexto: dto.contexto || existente.contexto,
+        embedding: dto.embedding !== undefined ? dto.embedding : existente.embedding
+      });
+      repositorioFinal = actualizado || existente;
+      yaExistia = true;
+    } else {
+      repositorioFinal = await RepositoriosModule.create(dto);
+    }
+
+    res.status(yaExistia ? 200 : 201).json({
       success: true,
-      message: 'Archivo registrado exitosamente en el repositorio.',
-      data: nuevoRepositorio
+      message: yaExistia
+        ? `El documento "${repositorioFinal.nom_arch}" ya existe en la base de datos (ID ${repositorioFinal.id}). Sus metadatos fueron actualizados sin duplicar el registro.`
+        : 'Archivo registrado exitosamente en el repositorio.',
+      data: repositorioFinal,
+      alreadyExisted: yaExistia
     });
   } catch (err: any) {
     res.status(500).json({
@@ -361,7 +398,10 @@ export async function procesarTextoYCrearRepositorio(req: Request, res: Response
       ruta_arch,
       driveFileId,
       categoria: categoriaManual,
-      contexto: contextoManual
+      contexto: contextoManual,
+      resumen: resumenManual,
+      descripcion: descripcionManual,
+      palabras_clave: palabrasClaveManual
     } = req.body;
 
     if (!texto || typeof texto !== 'string' || texto.trim().length === 0) {
@@ -384,10 +424,37 @@ export async function procesarTextoYCrearRepositorio(req: Request, res: Response
     }
 
     // 2. Analizar el texto con Gemini para extraer metadatos estructurados
-    const analysis = await analyzeDocumentText(texto.trim(), {
-      availableCategories,
-      originalFileName: nom_arch ? String(nom_arch).trim() : undefined
-    });
+    // Si el cliente ya suministró un resumen sustancial y descripción validados, usarlos
+    const hasValidManualSummary = typeof resumenManual === 'string' && resumenManual.trim().length >= 40;
+    const hasValidManualDescription = typeof descripcionManual === 'string' && descripcionManual.trim().length >= 20;
+
+    let analysis: DocumentAnalysisResult;
+    if (hasValidManualSummary && hasValidManualDescription) {
+      analysis = {
+        nom_arch: nom_arch ? String(nom_arch).trim() : undefined,
+        categoria: categoriaManual ? String(categoriaManual).trim() : undefined,
+        descripcion: descripcionManual.trim(),
+        resumen: resumenManual.trim(),
+        palabras_clave: Array.isArray(palabrasClaveManual) ? palabrasClaveManual.map(String) : [],
+        contexto: contextoManual ? String(contextoManual).trim() : 'General'
+      };
+    } else {
+      analysis = await analyzeDocumentText(texto.trim(), {
+        availableCategories,
+        originalFileName: nom_arch ? String(nom_arch).trim() : undefined
+      });
+
+      // Si el cliente proveyó algún campo específico manualmente, priorizarlo sobre la IA
+      if (hasValidManualSummary) {
+        analysis.resumen = resumenManual.trim();
+      }
+      if (hasValidManualDescription) {
+        analysis.descripcion = descripcionManual.trim();
+      }
+      if (Array.isArray(palabrasClaveManual) && palabrasClaveManual.length > 0) {
+        analysis.palabras_clave = palabrasClaveManual.map(String);
+      }
+    }
 
     // 3. Generar embedding vectorial de 768 dimensiones
     const textToEmbed = `${analysis.resumen} ${analysis.descripcion} ${analysis.palabras_clave.join(' ')}`;
@@ -429,18 +496,42 @@ export async function procesarTextoYCrearRepositorio(req: Request, res: Response
       embedding: vectorEmbedding
     };
 
-    const nuevoRepositorio = await RepositoriosModule.create(dto);
+    // Verificar si ya existe un registro con esta misma ruta_arch o nombre para enriquecerlo sin duplicar
+    let existente: Repositorio | null = null;
+    if (finalRuta && finalRuta !== 'texto-plano') {
+      const encontrados = await RepositoriosModule.findByProperty('ruta_arch', finalRuta);
+      if (encontrados.length > 0) {
+        existente = encontrados[0];
+      }
+    }
+    if (!existente && finalNomArch) {
+      const encontrados = await RepositoriosModule.findByNomArch(finalNomArch, true);
+      if (encontrados.length > 0) {
+        existente = encontrados[0];
+      }
+    }
 
-    res.status(201).json({
+    let nuevoRepositorio: Repositorio;
+    if (existente) {
+      const updated = await RepositoriosModule.update(existente.id, dto);
+      nuevoRepositorio = updated || existente;
+    } else {
+      nuevoRepositorio = await RepositoriosModule.create(dto);
+    }
+
+    res.status(existente ? 200 : 201).json({
       success: true,
-      message: 'Texto procesado por IA y registrado exitosamente en el repositorio.',
+      message: existente
+        ? `El documento "${nuevoRepositorio.nom_arch}" ya existe en el repositorio (ID ${nuevoRepositorio.id}). Se actualizaron sus metadatos y vector semántico sin duplicar el registro.`
+        : 'Texto procesado por IA y registrado exitosamente en el repositorio.',
       analysis: {
         nom_arch_sugerido: analysis.nom_arch,
         categoria_asignada: dto.categoria,
         contexto_asignado: dto.contexto,
         embedding_generado: vectorEmbedding !== null
       },
-      data: nuevoRepositorio
+      data: nuevoRepositorio,
+      alreadyExisted: Boolean(existente)
     });
   } catch (err: any) {
     console.error('❌ Error en procesarTextoYCrearRepositorio:', err);
